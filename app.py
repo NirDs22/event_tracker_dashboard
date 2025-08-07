@@ -51,6 +51,14 @@ def contains_hebrew(text: str) -> bool:
     return bool(HEBREW_RE.search(text))
 
 
+@st.dialog("AI Summary")
+def show_link_summary(content: str) -> None:
+    """Display a modal summarising a post's content."""
+    st.write(strip_think(summarize([content])))
+    if st.button("Close"):
+        st.rerun()
+
+
 # Initialise database and scheduler
 init_db()
 try:
@@ -239,23 +247,30 @@ else:
 
             st.subheader("Recent Posts")
             now = datetime.utcnow()
-            for _, row in df.sort_values("posted_at", ascending=False).head(5).iterrows():
+            for idx, row in (
+                df.sort_values("posted_at", ascending=False).head(5).iterrows()
+            ):
                 content = strip_think(str(row["content"]))
                 age = time_ago(row["posted_at"])
                 ic = SOURCE_ICONS.get(row["source"], "")
-                if contains_hebrew(content):
-                    link_html = f"<a href='{row['url']}'>{content[:100]}...</a>"
-                    if now - row["posted_at"] <= timedelta(hours=1):
-                        link_html = f"<strong>{link_html}</strong>"
-                    line = (
-                        f"&bull; {ic} {link_html} <em>({row['source']}, {age})</em>"
-                    )
-                    st.markdown(f"<div dir='rtl'>{line}</div>", unsafe_allow_html=True)
-                else:
-                    link = f"[{content[:100]}...]({row['url']})"
-                    if now - row["posted_at"] <= timedelta(hours=1):
-                        link = f"**{link}**"
-                    st.markdown(f"- {ic} {link} _({row['source']}, {age})_")
+                cols = st.columns([0.9, 0.1])
+                with cols[0]:
+                    if contains_hebrew(content):
+                        link_html = f"<a href='{row['url']}'>{content[:100]}...</a>"
+                        if now - row["posted_at"] <= timedelta(hours=1):
+                            link_html = f"<strong>{link_html}</strong>"
+                        line = (
+                            f"&bull; {ic} {link_html} <em>({row['source']}, {age})</em>"
+                        )
+                        st.markdown(f"<div dir='rtl'>{line}</div>", unsafe_allow_html=True)
+                    else:
+                        link = f"[{content[:100]}...]({row['url']})"
+                        if now - row["posted_at"] <= timedelta(hours=1):
+                            link = f"**{link}**"
+                        st.markdown(f"- {ic} {link} _({row['source']}, {age})_")
+                with cols[1]:
+                    if st.button("AI", key=f"ai_{idx}"):
+                        show_link_summary(str(row["content"]))
 
             st.subheader("AI Summary")
             st.write(strip_think(summarize(df["content"].head(20).tolist())))
