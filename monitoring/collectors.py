@@ -61,31 +61,56 @@ def fetch_reddit(topic: Topic) -> Iterable[dict]:
 
 
 def fetch_news(topic: Topic) -> Iterable[dict]:
-    """Fetch news articles using NewsAPI."""
-    try:
-        from newsapi import NewsApiClient
-    except Exception as exc:
-        print('newsapi library not installed', exc)
-        return []
-
+    """Fetch news articles via API or public RSS."""
     api_key = os.getenv('NEWSAPI_KEY')
-    if not api_key:
-        print('Missing NEWSAPI_KEY')
-        return []
-    newsapi = NewsApiClient(api_key=api_key)
     query = topic.name
     if topic.keywords:
         query += ' ' + ' OR '.join([k.strip() for k in topic.keywords.split(',') if k.strip()])
-    articles = newsapi.get_everything(q=query, language='en', sort_by='publishedAt', page_size=20)
-    for art in articles.get('articles', []):
-        yield {
-            'source': 'news',
-            'content': art['title'],
-            'url': art['url'],
-            'posted_at': datetime.fromisoformat(art['publishedAt'].replace('Z', '+00:00')),
-            'likes': 0,
-            'comments': 0,
-        }
+
+    if api_key:
+        try:
+            from newsapi import NewsApiClient
+
+            newsapi = NewsApiClient(api_key=api_key)
+            articles = newsapi.get_everything(q=query, language='en', sort_by='publishedAt', page_size=20)
+            for art in articles.get('articles', []):
+                yield {
+                    'source': 'news',
+                    'content': art['title'],
+                    'url': art['url'],
+                    'posted_at': datetime.fromisoformat(art['publishedAt'].replace('Z', '+00:00')),
+                    'likes': 0,
+                    'comments': 0,
+                }
+            return
+        except Exception as exc:
+            print('NewsAPI fetch failed', exc)
+
+    # Fallback to Google News RSS (no key required)
+    try:
+        import feedparser
+        import urllib.parse
+
+        feed_url = (
+            "https://news.google.com/rss/search?q="
+            + urllib.parse.quote(query)
+            + "&hl=en-US&gl=US&ceid=US:en"
+        )
+        feed = feedparser.parse(feed_url)
+        for entry in feed.entries[:20]:
+            posted = entry.get('published_parsed')
+            posted_dt = datetime(*posted[:6]) if posted else datetime.utcnow()
+            yield {
+                'source': 'news',
+                'content': entry.get('title', ''),
+                'url': entry.get('link', ''),
+                'posted_at': posted_dt,
+                'likes': 0,
+                'comments': 0,
+            }
+    except Exception as exc:
+        print('Google News RSS fetch failed', exc)
+        return []
 
 
 def collect_topic(topic: Topic):

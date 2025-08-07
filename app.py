@@ -1,7 +1,15 @@
+import os
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from wordcloud import WordCloud
+
+try:
+    from dotenv import load_dotenv
+    ENV_LOADED = load_dotenv()
+except Exception:
+    ENV_LOADED = False
 
 from monitoring.database import init_db, SessionLocal, Topic, Post
 from monitoring.collectors import collect_topic
@@ -17,6 +25,21 @@ except Exception:
 
 st.set_page_config(page_title="Social & News Monitor", layout="wide")
 st.title("\U0001F4F0 Social & News Monitoring Dashboard")
+
+if not ENV_LOADED:
+    st.sidebar.info("No .env file found. Using defaults; some features may be limited.")
+
+if not os.getenv("REDDIT_CLIENT_ID") or not os.getenv("REDDIT_CLIENT_SECRET"):
+    st.sidebar.warning("Reddit credentials missing: Reddit posts won't be collected.")
+
+if not os.getenv("NEWSAPI_KEY"):
+    st.sidebar.warning("NEWSAPI_KEY not set: using Google News RSS as fallback.")
+
+if not os.getenv("SMTP_HOST") or not os.getenv("SMTP_USER"):
+    st.sidebar.info("Email digests disabled (missing SMTP settings).")
+
+if not os.getenv("OLLAMA_MODEL"):
+    st.sidebar.info("No OLLAMA_MODEL configured; using local transformers summariser.")
 
 # Sidebar for adding topics
 st.sidebar.header("Add / Manage Topics")

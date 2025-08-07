@@ -11,3 +11,4 @@ instaloader
 transformers
 python-dotenv
 ollama
+feedparser
