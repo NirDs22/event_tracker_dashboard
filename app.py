@@ -51,6 +51,13 @@ except Exception:
         "Facebook scraping requires the `facebook-scraper` package. Install with `pip install \"facebook-scraper[lxml]\" lxml_html_clean` to enable."
     )
 
+try:
+    import instaloader  # type: ignore  # noqa: F401
+except Exception:
+    st.sidebar.info(
+        "Instagram scraping requires the `instaloader` package. Install with `pip install instaloader` to enable."
+    )
+
 if not os.getenv("SMTP_HOST") or not os.getenv("SMTP_USER"):
     st.sidebar.info(
         "Email digests disabled. Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in .env to enable."
@@ -67,7 +74,30 @@ if scheduler is None:
         "Background scheduler did not start. Scheduled collection won't run; check logs or collect manually."
     )
 
-# Sidebar for adding topics
+# Sidebar for data source toggles and adding topics
+st.sidebar.header("Data Sources")
+enable_twitter = st.sidebar.checkbox(
+    "Twitter", value=os.getenv("ENABLE_TWITTER", "1") == "1"
+)
+enable_reddit = st.sidebar.checkbox(
+    "Reddit", value=os.getenv("ENABLE_REDDIT", "1") == "1"
+)
+enable_news = st.sidebar.checkbox(
+    "News", value=os.getenv("ENABLE_NEWS", "1") == "1"
+)
+enable_facebook = st.sidebar.checkbox(
+    "Facebook", value=os.getenv("ENABLE_FACEBOOK", "1") == "1"
+)
+enable_instagram = st.sidebar.checkbox(
+    "Instagram", value=os.getenv("ENABLE_INSTAGRAM", "1") == "1"
+)
+
+os.environ["ENABLE_TWITTER"] = "1" if enable_twitter else "0"
+os.environ["ENABLE_REDDIT"] = "1" if enable_reddit else "0"
+os.environ["ENABLE_NEWS"] = "1" if enable_news else "0"
+os.environ["ENABLE_FACEBOOK"] = "1" if enable_facebook else "0"
+os.environ["ENABLE_INSTAGRAM"] = "1" if enable_instagram else "0"
+
 st.sidebar.header("Add / Manage Topics")
 name = st.sidebar.text_input("Topic or Person")
 keywords = st.sidebar.text_input("Keywords (comma separated)")
