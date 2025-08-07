@@ -24,16 +24,23 @@ def fetch_twitter(topic: Topic) -> Tuple[List[dict], List[str]]:
         query = f"{query} ({kw})"
 
     scraper = TwitterSearchScraper(query)
-    for tweet in scraper.get_items():
-        posts.append(
-            {
-                'source': 'twitter',
-                'content': tweet.content,
-                'url': tweet.url,
-                'posted_at': tweet.date,
-                'likes': getattr(tweet, 'likeCount', 0),
-                'comments': getattr(tweet, 'replyCount', 0),
-            }
+    try:
+        for tweet in scraper.get_items():
+            posts.append(
+                {
+                    'source': 'twitter',
+                    'content': tweet.content,
+                    'url': tweet.url,
+                    'posted_at': tweet.date,
+                    'likes': getattr(tweet, 'likeCount', 0),
+                    'comments': getattr(tweet, 'replyCount', 0),
+                }
+            )
+    except Exception as exc:
+        errors.append(
+            "Twitter fetch failed: {exc}. Twitter may be blocking requests; try again later or update snscrape.".format(
+                exc=exc
+            )
         )
     return posts, errors
 

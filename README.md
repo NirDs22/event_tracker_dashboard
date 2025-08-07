@@ -85,6 +85,7 @@ Your browser will open to the dashboard. Use the sidebar to add topics, optional
 | `NewsAPI request failed...` | The key may be wrong or expired. Double‑check `NEWSAPI_KEY` in `.env` or remove it to use the free Google News RSS fallback. |
 | `snscrape not installed` | Install with `pip install snscrape`. |
 | `praw not installed` | Install with `pip install praw`. |
+| `Twitter fetch failed...blocked (404)` | Twitter may temporarily block anonymous scraping. Update to the latest snscrape with `pip install -U snscrape` or try again later. |
 | `Background scheduler did not start` | The scheduler library may be missing or blocked. Collections can still be triggered manually with **Collect Now**. |
 
 More help and advanced tips are available in the comments within `.env.example` and in the source code.
