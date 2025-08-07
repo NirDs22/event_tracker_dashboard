@@ -8,6 +8,6 @@ snscrape
 praw
 newsapi-python
 instaloader
-openai
 transformers
 python-dotenv
+ollama

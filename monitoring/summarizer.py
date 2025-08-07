@@ -8,27 +8,46 @@ def summarize(texts: List[str]) -> str:
     if not texts:
         return "No content to summarise."
     joined = "\n".join(texts)[:4000]
-    api_key = os.getenv('OPENAI_API_KEY')
+
+    # Prefer local models served by Ollama when configured
+    model = os.getenv("OLLAMA_MODEL")
+    if model:
+        try:
+            import ollama
+
+            prompt = (
+                "Provide a short news style summary of the following:\n" + joined
+            )
+            result = ollama.generate(model=model, prompt=prompt)
+            return result.get("response", "").strip()
+        except Exception as exc:
+            print("Ollama summarisation failed", exc)
+
+    # Optional OpenAI fallback
+    api_key = os.getenv("OPENAI_API_KEY")
     if api_key:
         try:
             import openai
+
             openai.api_key = api_key
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "Provide a short news style summary"},
-                    {"role": "user", "content": joined}
-                ]
+                    {"role": "user", "content": joined},
+                ],
             )
-            return response['choices'][0]['message']['content']
+            return response["choices"][0]["message"]["content"]
         except Exception as exc:
-            print('OpenAI summarisation failed', exc)
+            print("OpenAI summarisation failed", exc)
+
     # Fallback to transformers summariser
     try:
         from transformers import pipeline
-        summarizer = pipeline('summarization')
+
+        summarizer = pipeline("summarization")
         result = summarizer(joined, max_length=120, min_length=30, do_sample=False)
-        return result[0]['summary_text']
+        return result[0]["summary_text"]
     except Exception as exc:
-        print('transformers pipeline failed', exc)
+        print("transformers pipeline failed", exc)
     return joined[:500]

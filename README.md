@@ -7,7 +7,7 @@ A Streamlit-based dashboard for tracking people or topics across Twitter, Reddit
 - Add topics with custom keywords
 - Automatic collection from Twitter (snscrape), Reddit (PRAW) and NewsAPI
 - SQLite database storage using SQLAlchemy
-- Word clouds, time series charts and AI summaries
+- Word clouds, time series charts and AI summaries (supports local models via Ollama)
 - Daily scheduled collection and optional email digests
 
 ## Setup
@@ -18,19 +18,18 @@ A Streamlit-based dashboard for tracking people or topics across Twitter, Reddit
 pip install -r requirements.txt
 ```
 
-2. **Provide API keys**
+2. **Provide configuration**
 
-Create a `.env` file or export environment variables:
+Copy the example file and fill in your own values:
 
 ```
-OPENAI_API_KEY=...
-NEWSAPI_KEY=...
-REDDIT_CLIENT_ID=...
-REDDIT_CLIENT_SECRET=...
-SMTP_HOST=...
-SMTP_USER=...
-SMTP_PASSWORD=...
+cp .env.example .env
 ```
+
+The most important values are API keys for Reddit and NewsAPI as well as
+the model name served by [Ollama](https://ollama.com/).  By default the
+app looks for a locally running model such as Qwen3 via `OLLAMA_MODEL`.
+OpenAI keys are optional and only used when provided.
 
 3. **Run the dashboard**
 
