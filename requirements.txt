@@ -1,0 +1,13 @@
+streamlit
+pandas
+plotly
+wordcloud
+sqlalchemy
+apscheduler
+snscrape
+praw
+newsapi-python
+instaloader
+openai
+transformers
+python-dotenv
