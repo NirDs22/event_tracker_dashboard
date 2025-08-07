@@ -245,11 +245,9 @@ else:
                 with col2:
                     st.image(wc.to_array(), use_column_width=True)
 
-            st.subheader("Recent Posts")
             now = datetime.utcnow()
-            for idx, row in (
-                df.sort_values("posted_at", ascending=False).head(5).iterrows()
-            ):
+
+            def render_post(row, key_prefix: str) -> None:
                 content = strip_think(str(row["content"]))
                 age = time_ago(row["posted_at"])
                 ic = SOURCE_ICONS.get(row["source"], "")
@@ -262,15 +260,40 @@ else:
                         line = (
                             f"&bull; {ic} {link_html} <em>({row['source']}, {age})</em>"
                         )
-                        st.markdown(f"<div dir='rtl'>{line}</div>", unsafe_allow_html=True)
+                        st.markdown(
+                            f"<div dir='rtl'>{line}</div>", unsafe_allow_html=True
+                        )
                     else:
                         link = f"[{content[:100]}...]({row['url']})"
                         if now - row["posted_at"] <= timedelta(hours=1):
                             link = f"**{link}**"
                         st.markdown(f"- {ic} {link} _({row['source']}, {age})_")
                 with cols[1]:
-                    if st.button("AI", key=f"ai_{idx}"):
+                    if st.button("AI", key=key_prefix):
                         show_link_summary(str(row["content"]))
+
+            st.subheader("Recent Posts")
+            for idx, row in (
+                df.sort_values("posted_at", ascending=False).head(5).iterrows()
+            ):
+                render_post(row, f"recent_{idx}")
+
+            reddit_df = df[df["source"] == "reddit"]
+            if not reddit_df.empty:
+                st.subheader("Newest Reddit Post")
+                for idx, row in (
+                    reddit_df.sort_values("posted_at", ascending=False)
+                    .head(1)
+                    .iterrows()
+                ):
+                    render_post(row, f"reddit_new_{idx}")
+                st.subheader("Hot Reddit Posts")
+                for idx, row in (
+                    reddit_df.sort_values("likes", ascending=False)
+                    .head(5)
+                    .iterrows()
+                ):
+                    render_post(row, f"reddit_hot_{idx}")
 
             st.subheader("AI Summary")
             st.write(strip_think(summarize(df["content"].head(20).tolist())))

@@ -66,21 +66,34 @@ def fetch_reddit(topic: Topic) -> Tuple[List[dict], List[str]]:
         )
         return posts, errors
     try:
-        reddit = praw.Reddit(client_id=client_id, client_secret=client_secret, user_agent=user_agent)
+        reddit = praw.Reddit(
+            client_id=client_id, client_secret=client_secret, user_agent=user_agent
+        )
         query = topic.name
         if topic.keywords:
-            query += ' ' + ' '.join([k.strip() for k in topic.keywords.split(',') if k.strip()])
-        for submission in reddit.subreddit('all').search(query, limit=50):
-            posts.append(
-                {
-                    'source': 'reddit',
-                    'content': submission.title,
-                    'url': submission.url,
-                    'posted_at': datetime.fromtimestamp(submission.created_utc),
-                    'likes': submission.score,
-                    'comments': submission.num_comments,
-                }
+            query += ' ' + ' '.join(
+                [k.strip() for k in topic.keywords.split(',') if k.strip()]
             )
+        seen: set[str] = set()
+        for sort in ("new", "hot"):
+            for submission in reddit.subreddit('all').search(
+                query, sort=sort, limit=25
+            ):
+                if submission.url in seen:
+                    continue
+                seen.add(submission.url)
+                posts.append(
+                    {
+                        'source': 'reddit',
+                        'content': submission.title,
+                        'url': submission.url,
+                        'posted_at': datetime.fromtimestamp(
+                            submission.created_utc
+                        ),
+                        'likes': submission.score,
+                        'comments': submission.num_comments,
+                    }
+                )
     except Exception as exc:
         errors.append(
             f"Reddit fetch failed: {exc}. Verify your Reddit credentials in .env."
