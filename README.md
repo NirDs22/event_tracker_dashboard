@@ -1,11 +1,11 @@
 # Social & News Monitoring Dashboard
 
-A Streamlit-based dashboard for tracking people or topics across Twitter, Reddit and news sites.
+A Streamlit-based dashboard for tracking people or topics across Twitter, Reddit, Facebook and news sites.
 
 ## Features
 
 - Add topics with custom keywords
-- Automatic collection from Twitter (snscrape), Reddit (PRAW) and News (NewsAPI or Google News RSS)
+- Automatic collection from Twitter (snscrape), Reddit (PRAW), public Facebook pages (facebook-scraper) and News (NewsAPI or Google News RSS)
 - SQLite database storage using SQLAlchemy
 - Word clouds, time series charts and AI summaries (supports local models via Ollama or HuggingFace)
 - Daily scheduled collection and optional email digests
@@ -61,6 +61,7 @@ All values are **optional**. Without them the app still works using free public 
 - **Reddit keys** – visit [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps), create an app and copy the client ID and secret.
 - **SMTP settings** – needed only if you want daily email digests.
 - **OLLAMA_MODEL** – install [Ollama](https://ollama.ai) and run `ollama pull qwen:latest`, then set `OLLAMA_MODEL=qwen` for local AI summaries.
+- **Facebook pages** – no key required. When adding a topic, include public Facebook page URLs in the **Profiles** field to collect their posts.
 
 ### 6. Run the Dashboard
 
@@ -85,6 +86,7 @@ Your browser will open to the dashboard. Use the sidebar to add topics, optional
 | `NewsAPI request failed...` | The key may be wrong or expired. Double‑check `NEWSAPI_KEY` in `.env` or remove it to use the free Google News RSS fallback. |
 | `snscrape not installed` | Install with `pip install snscrape`. |
 | `praw not installed` | Install with `pip install praw`. |
+| `facebook-scraper not installed` | Install with `pip install "facebook-scraper[lxml]" lxml_html_clean`. |
 | `Twitter fetch failed...blocked (404)` | Twitter may temporarily block anonymous scraping. Update to the latest snscrape with `pip install -U snscrape` or try again later. |
 | `Background scheduler did not start` | The scheduler library may be missing or blocked. Collections can still be triggered manually with **Collect Now**. |
 

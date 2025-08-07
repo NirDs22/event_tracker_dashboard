@@ -12,3 +12,5 @@ transformers
 python-dotenv
 ollama
 feedparser
+facebook-scraper
+lxml_html_clean

@@ -44,6 +44,13 @@ if not os.getenv("NEWSAPI_KEY"):
         "Get a free key at newsapi.org and add NEWSAPI_KEY to .env to unlock more sources."
     )
 
+try:
+    import facebook_scraper  # type: ignore  # noqa: F401
+except Exception:
+    st.sidebar.info(
+        "Facebook scraping requires the `facebook-scraper` package. Install with `pip install \"facebook-scraper[lxml]\" lxml_html_clean` to enable."
+    )
+
 if not os.getenv("SMTP_HOST") or not os.getenv("SMTP_USER"):
     st.sidebar.info(
         "Email digests disabled. Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in .env to enable."

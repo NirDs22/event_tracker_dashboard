@@ -155,10 +155,52 @@ def fetch_news(topic: Topic) -> Tuple[List[dict], List[str]]:
     return posts, errors
 
 
+def fetch_facebook(topic: Topic) -> Tuple[List[dict], List[str]]:
+    """Scrape public Facebook pages listed in the topic profiles."""
+    posts: List[dict] = []
+    errors: List[str] = []
+    try:
+        from facebook_scraper import get_posts
+    except Exception:
+        errors.append(
+            "facebook-scraper not installed. Install with `pip install \"facebook-scraper[lxml]\" lxml_html_clean` to enable Facebook scraping."
+        )
+        return posts, errors
+
+    profiles = [
+        p.strip() for p in (topic.profiles or "").split(",") if "facebook.com" in p
+    ]
+    if not profiles:
+        return posts, errors
+
+    keywords = [k.strip().lower() for k in (topic.keywords or "").split(",") if k.strip()]
+
+    for url in profiles:
+        page = url.rstrip("/").split("/")[-1]
+        try:
+            for post in get_posts(account=page, pages=1):
+                text = post.get("text", "")
+                if keywords and not any(k in text.lower() for k in keywords):
+                    continue
+                posts.append(
+                    {
+                        "source": "facebook",
+                        "content": text,
+                        "url": post.get("post_url", ""),
+                        "posted_at": post.get("time", datetime.utcnow()),
+                        "likes": post.get("likes", 0),
+                        "comments": post.get("comments", 0),
+                    }
+                )
+        except Exception as exc:
+            errors.append(f"Facebook fetch failed for {page}: {exc}")
+    return posts, errors
+
+
 def collect_topic(topic: Topic) -> List[str]:
     """Collect posts for all sources for a given topic."""
     session = SessionLocal()
-    fetchers = [fetch_twitter, fetch_reddit, fetch_news]
+    fetchers = [fetch_twitter, fetch_reddit, fetch_news, fetch_facebook]
     errors: List[str] = []
     for fetcher in fetchers:
         posts, errs = fetcher(topic)
