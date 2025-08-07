@@ -27,19 +27,38 @@ st.set_page_config(page_title="Social & News Monitor", layout="wide")
 st.title("\U0001F4F0 Social & News Monitoring Dashboard")
 
 if not ENV_LOADED:
-    st.sidebar.info("No .env file found. Using defaults; some features may be limited.")
+    st.sidebar.info(
+        "No .env file found. Using defaults; some features may be limited. "
+        "Copy .env.example to .env to add your own keys."
+    )
 
 if not os.getenv("REDDIT_CLIENT_ID") or not os.getenv("REDDIT_CLIENT_SECRET"):
-    st.sidebar.warning("Reddit credentials missing: Reddit posts won't be collected.")
+    st.sidebar.warning(
+        "Reddit credentials missing. Reddit posts won't be collected. "
+        "Create a Reddit app and set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env."
+    )
 
 if not os.getenv("NEWSAPI_KEY"):
-    st.sidebar.warning("NEWSAPI_KEY not set: using Google News RSS as fallback.")
+    st.sidebar.warning(
+        "NEWSAPI_KEY not set: using Google News RSS. "
+        "Get a free key at newsapi.org and add NEWSAPI_KEY to .env to unlock more sources."
+    )
 
 if not os.getenv("SMTP_HOST") or not os.getenv("SMTP_USER"):
-    st.sidebar.info("Email digests disabled (missing SMTP settings).")
+    st.sidebar.info(
+        "Email digests disabled. Set SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in .env to enable."
+    )
 
 if not os.getenv("OLLAMA_MODEL"):
-    st.sidebar.info("No OLLAMA_MODEL configured; using local transformers summariser.")
+    st.sidebar.info(
+        "No OLLAMA_MODEL configured; using local transformers summariser. "
+        "Install Ollama and run `ollama pull qwen:latest`, then set OLLAMA_MODEL=qwen in .env for higher quality summaries."
+    )
+
+if scheduler is None:
+    st.sidebar.info(
+        "Background scheduler did not start. Scheduled collection won't run; check logs or collect manually."
+    )
 
 # Sidebar for adding topics
 st.sidebar.header("Add / Manage Topics")
@@ -56,10 +75,15 @@ if st.sidebar.button("Add Topic") and name:
 if st.sidebar.button("Collect Now"):
     session = SessionLocal()
     topics = session.query(Topic).all()
+    errors = []
     for t in topics:
-        collect_topic(t)
+        errors.extend(collect_topic(t))
     session.close()
-    st.sidebar.success("Collection finished")
+    if errors:
+        for err in errors:
+            st.sidebar.error(err)
+    else:
+        st.sidebar.success("Collection finished")
 
 session = SessionLocal()
 topics = session.query(Topic).all()
