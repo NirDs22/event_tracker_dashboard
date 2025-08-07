@@ -221,9 +221,10 @@ else:
             df["date"] = df["posted_at"].dt.date
             daily = df.groupby("date").size().reset_index(name="mentions")
             fig = px.line(daily, x="date", y="mentions", title="Mentions Over Time")
-            st.plotly_chart(fig, use_container_width=True)
-
             text = " ".join(df["content"].astype(str))
+            col1, col2 = st.columns(2)
+            with col1:
+                st.plotly_chart(fig, use_container_width=True)
             if text.strip():
                 font = str(DEFAULT_FONT) if DEFAULT_FONT.exists() else None
                 wc = WordCloud(
@@ -233,7 +234,8 @@ else:
                     max_words=20,
                     font_path=font,
                 ).generate(text)
-                st.image(wc.to_array(), use_column_width=True)
+                with col2:
+                    st.image(wc.to_array(), use_column_width=True)
 
             st.subheader("Recent Posts")
             now = datetime.utcnow()
