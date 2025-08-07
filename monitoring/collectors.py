@@ -197,10 +197,153 @@ def fetch_facebook(topic: Topic) -> Tuple[List[dict], List[str]]:
     return posts, errors
 
 
+def fetch_instagram(topic: Topic) -> Tuple[List[dict], List[str]]:
+    """Collect public Instagram posts for profiles listed in the topic."""
+    posts: List[dict] = []
+    errors: List[str] = []
+    try:
+        import instaloader
+    except Exception:
+        instaloader = None
+        errors.append(
+            "instaloader not installed. Install with `pip install instaloader` to enable Instagram scraping."
+        )
+
+    profiles = [
+        p.strip() for p in (topic.profiles or "").split(",") if "instagram.com" in p
+    ]
+    if not profiles:
+        return posts, errors
+
+    keywords = [k.strip().lower() for k in (topic.keywords or "").split(",") if k.strip()]
+
+    for url in profiles:
+        username = url.rstrip("/").split("/")[-1]
+        profile_url = f"https://www.instagram.com/{username}/"
+        fetched = False
+
+        if instaloader:
+            try:
+                L = instaloader.Instaloader(
+                    download_pictures=False,
+                    download_videos=False,
+                    download_comments=False,
+                    save_metadata=False,
+                    compress_json=False,
+                )
+                profile = instaloader.Profile.from_username(L.context, username)
+                if profile.is_private:
+                    errors.append(f"Instagram profile {username} is private")
+                    posts.append(
+                        {
+                            "source": "instagram",
+                            "content": "Profile is private",
+                            "url": profile_url,
+                            "posted_at": datetime.utcnow(),
+                            "likes": 0,
+                            "comments": 0,
+                        }
+                    )
+                    fetched = True
+                else:
+                    count = 0
+                    for post in profile.get_posts():
+                        text = post.caption or ""
+                        if keywords and not any(k in text.lower() for k in keywords):
+                            continue
+                        posts.append(
+                            {
+                                "source": "instagram",
+                                "content": text,
+                                "url": f"https://www.instagram.com/p/{post.shortcode}/",
+                                "posted_at": post.date_utc,
+                                "likes": post.likes,
+                                "comments": post.comments,
+                            }
+                        )
+                        count += 1
+                        if count >= 10:
+                            break
+                    fetched = True
+            except Exception as exc:
+                errors.append(
+                    f"Instagram fetch via Instaloader failed for {username}: {exc}"
+                )
+
+        if not fetched:
+            try:
+                import requests
+
+                resp = requests.get(
+                    f"https://r.jina.ai/http://www.instagram.com/{username}/?__a=1&__d=dis",
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json().get("graphql", {}).get("user", {})
+                    if data.get("is_private"):
+                        errors.append(f"Instagram profile {username} is private")
+                        posts.append(
+                            {
+                                "source": "instagram",
+                                "content": "Profile is private",
+                                "url": profile_url,
+                                "posted_at": datetime.utcnow(),
+                                "likes": 0,
+                                "comments": 0,
+                            }
+                        )
+                        continue
+                    edges = (
+                        data.get("edge_owner_to_timeline_media", {}).get("edges", [])
+                    )
+                    for edge in edges[:10]:
+                        node = edge.get("node", {})
+                        text = ""
+                        cap_edges = (
+                            node.get("edge_media_to_caption", {}).get("edges", [])
+                        )
+                        if cap_edges:
+                            text = cap_edges[0].get("node", {}).get("text", "")
+                        if keywords and not any(k in text.lower() for k in keywords):
+                            continue
+                        posts.append(
+                            {
+                                "source": "instagram",
+                                "content": text,
+                                "url": f"https://www.instagram.com/p/{node.get('shortcode', '')}/",
+                                "posted_at": datetime.fromtimestamp(
+                                    node.get("taken_at_timestamp", 0)
+                                ),
+                                "likes": node.get("edge_liked_by", {}).get("count", 0),
+                                "comments": node.get("edge_media_to_comment", {}).get(
+                                    "count", 0
+                                ),
+                            }
+                        )
+                else:
+                    errors.append(
+                        f"Instagram fetch failed for {username}: HTTP {resp.status_code}"
+                    )
+            except Exception as exc:
+                errors.append(f"Instagram fetch failed for {username}: {exc}")
+
+    return posts, errors
+
+
 def collect_topic(topic: Topic) -> List[str]:
     """Collect posts for all sources for a given topic."""
     session = SessionLocal()
-    fetchers = [fetch_twitter, fetch_reddit, fetch_news, fetch_facebook]
+    fetchers = []
+    if os.getenv("ENABLE_TWITTER", "1") == "1":
+        fetchers.append(fetch_twitter)
+    if os.getenv("ENABLE_REDDIT", "1") == "1":
+        fetchers.append(fetch_reddit)
+    if os.getenv("ENABLE_NEWS", "1") == "1":
+        fetchers.append(fetch_news)
+    if os.getenv("ENABLE_FACEBOOK", "1") == "1":
+        fetchers.append(fetch_facebook)
+    if os.getenv("ENABLE_INSTAGRAM", "1") == "1":
+        fetchers.append(fetch_instagram)
     errors: List[str] = []
     for fetcher in fetchers:
         posts, errs = fetcher(topic)

@@ -1,14 +1,15 @@
 # Social & News Monitoring Dashboard
 
-A Streamlit-based dashboard for tracking people or topics across Twitter, Reddit, Facebook and news sites.
+A Streamlit-based dashboard for tracking people or topics across Twitter, Reddit, Facebook, Instagram and news sites.
 
 ## Features
 
 - Add topics with custom keywords
-- Automatic collection from Twitter (snscrape), Reddit (PRAW), public Facebook pages (facebook-scraper) and News (NewsAPI or Google News RSS)
+- Automatic collection from Twitter (snscrape), Reddit (PRAW), public Facebook pages (facebook-scraper), public Instagram profiles (instaloader) and News (NewsAPI or Google News RSS)
 - SQLite database storage using SQLAlchemy
 - Word clouds, time series charts and AI summaries (supports local models via Ollama or HuggingFace)
 - Daily scheduled collection and optional email digests
+- Toggle individual sources on or off as needed
 
 ## Beginner-Friendly Setup Guide
 
@@ -62,6 +63,8 @@ All values are **optional**. Without them the app still works using free public 
 - **SMTP settings** – needed only if you want daily email digests.
 - **OLLAMA_MODEL** – install [Ollama](https://ollama.ai) and run `ollama pull qwen:latest`, then set `OLLAMA_MODEL=qwen` for local AI summaries.
 - **Facebook pages** – no key required. When adding a topic, include public Facebook page URLs in the **Profiles** field to collect their posts.
+- **Instagram profiles** – no key required. Include public Instagram profile URLs in **Profiles** to collect their posts.
+- **ENABLE_*** variables – set `ENABLE_TWITTER`, `ENABLE_REDDIT`, `ENABLE_NEWS`, `ENABLE_FACEBOOK` or `ENABLE_INSTAGRAM` to `0` in `.env` (or use the sidebar checkboxes) to disable specific sources.
 
 ### 6. Run the Dashboard
 
