@@ -1,4 +1,6 @@
 import os
+import re
+from pathlib import Path
 from datetime import datetime, timedelta
 
 import streamlit as st
@@ -39,6 +41,14 @@ SOURCE_ICONS = {
     "news": "📰",
     "facebook": "📘",
 }
+
+
+HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
+DEFAULT_FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
+
+def contains_hebrew(text: str) -> bool:
+    return bool(HEBREW_RE.search(text))
 
 
 # Initialise database and scheduler
@@ -215,8 +225,13 @@ else:
 
             text = " ".join(df["content"].astype(str))
             if text.strip():
+                font = str(DEFAULT_FONT) if DEFAULT_FONT.exists() else None
                 wc = WordCloud(
-                    width=800, height=400, background_color="white", max_words=20
+                    width=800,
+                    height=400,
+                    background_color="white",
+                    max_words=20,
+                    font_path=font,
                 ).generate(text)
                 st.image(wc.to_array(), use_column_width=True)
 
@@ -226,10 +241,19 @@ else:
                 content = strip_think(str(row["content"]))
                 age = time_ago(row["posted_at"])
                 ic = SOURCE_ICONS.get(row["source"], "")
-                link = f"[{content[:100]}...]({row['url']})"
-                if now - row["posted_at"] <= timedelta(hours=1):
-                    link = f"**{link}**"
-                st.markdown(f"- {ic} {link} _({row['source']}, {age})_")
+                if contains_hebrew(content):
+                    link_html = f"<a href='{row['url']}'>{content[:100]}...</a>"
+                    if now - row["posted_at"] <= timedelta(hours=1):
+                        link_html = f"<strong>{link_html}</strong>"
+                    line = (
+                        f"&bull; {ic} {link_html} <em>({row['source']}, {age})</em>"
+                    )
+                    st.markdown(f"<div dir='rtl'>{line}</div>", unsafe_allow_html=True)
+                else:
+                    link = f"[{content[:100]}...]({row['url']})"
+                    if now - row["posted_at"] <= timedelta(hours=1):
+                        link = f"**{link}**"
+                    st.markdown(f"- {ic} {link} _({row['source']}, {age})_")
 
             st.subheader("AI Summary")
             st.write(strip_think(summarize(df["content"].head(20).tolist())))
