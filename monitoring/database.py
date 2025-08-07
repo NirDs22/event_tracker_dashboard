@@ -17,6 +17,10 @@ class Topic(Base):
     name = Column(String, unique=True, index=True, nullable=False)
     keywords = Column(String, default='')  # comma separated
     profiles = Column(String, default='')  # comma separated profiles
+    color = Column(String, default="#1f77b4")
+    icon = Column(String, default="📌")
+    last_collected = Column(DateTime)
+    last_viewed = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     posts = relationship('Post', back_populates='topic', cascade='all, delete-orphan')
