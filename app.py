@@ -626,16 +626,24 @@ else:
         now = datetime.utcnow()
 
         def render_post_gallery(row, key_prefix: str, topic=None, is_photo=False) -> None:
-            """Render a post in a consistent-height gallery card with proper border and underline.
-            Uses a single HTML block with all dynamic content escaped to avoid leaking HTML.
+            """Render a post in a consistent-height gallery card.
+            Cleans any HTML from the content so tags aren't shown while keeping
+            the underline and styling intact.
             """
-            # Clean the content for display
             import re as _re
             import html as _html
+            try:
+                from bs4 import BeautifulSoup  # type: ignore
+            except Exception:  # pragma: no cover - bs4 is optional
+                BeautifulSoup = None
 
             raw_content = _html.unescape(strip_think(str(row["content"])))
-            # Plain text content
-            content = _re.sub(r"<[^>]+>", "", raw_content).strip()
+
+            if BeautifulSoup:
+                # Robust HTML stripping to avoid leftover tags being displayed
+                content = BeautifulSoup(raw_content, "html.parser").get_text(" ", strip=True)
+            else:  # Fallback to regex if bs4 isn't installed
+                content = _re.sub(r"<[^>]+>", "", raw_content).strip()
 
             # Title from first line of content (shorter for photos)
             max_title_length = 60 if is_photo else 80
@@ -758,8 +766,16 @@ else:
             # Clean the content for display
             import html
             import re
+            try:
+                from bs4 import BeautifulSoup  # type: ignore
+            except Exception:  # pragma: no cover
+                BeautifulSoup = None
+
             raw_content = html.unescape(strip_think(str(row["content"])))
-            content = re.sub(r'<[^>]+>', '', raw_content)[:200]
+            if BeautifulSoup:
+                content = BeautifulSoup(raw_content, "html.parser").get_text(" ", strip=True)[:200]
+            else:
+                content = re.sub(r'<[^>]+>', '', raw_content)[:200]
             
             age = time_ago(row["posted_at"])
             source_icon = SOURCE_ICONS.get(row["source"], "📄")
