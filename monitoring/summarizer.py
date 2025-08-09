@@ -1,5 +1,6 @@
 """Summarise collections of posts using an LLM."""
 import os
+import re
 from typing import List
 
 
@@ -19,7 +20,7 @@ def summarize(texts: List[str]) -> str:
                 "Provide a short news style summary of the following:\n" + joined
             )
             result = ollama.generate(model=model, prompt=prompt)
-            return result.get("response", "").strip()
+            return strip_think(result.get("response", ""))
         except Exception as exc:
             print("Ollama summarisation failed", exc)
 
@@ -30,8 +31,13 @@ def summarize(texts: List[str]) -> str:
         model_name = os.getenv("HF_SUMMARY_MODEL", "t5-small")
         summarizer = pipeline("summarization", model=model_name)
         result = summarizer(joined, max_length=120, min_length=30, do_sample=False)
-        return result[0]["summary_text"]
+        return strip_think(result[0]["summary_text"])
     except Exception as exc:
         print("transformers pipeline failed", exc)
 
-    return joined[:500]
+    return strip_think(joined[:500])
+
+
+def strip_think(text: str) -> str:
+    """Remove <think>...</think> sections from text."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()

@@ -1,7 +1,7 @@
 """Data collection utilities for social networks and news APIs."""
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 
 from .database import SessionLocal, Topic, Post
 
@@ -66,21 +66,34 @@ def fetch_reddit(topic: Topic) -> Tuple[List[dict], List[str]]:
         )
         return posts, errors
     try:
-        reddit = praw.Reddit(client_id=client_id, client_secret=client_secret, user_agent=user_agent)
+        reddit = praw.Reddit(
+            client_id=client_id, client_secret=client_secret, user_agent=user_agent
+        )
         query = topic.name
         if topic.keywords:
-            query += ' ' + ' '.join([k.strip() for k in topic.keywords.split(',') if k.strip()])
-        for submission in reddit.subreddit('all').search(query, limit=50):
-            posts.append(
-                {
-                    'source': 'reddit',
-                    'content': submission.title,
-                    'url': submission.url,
-                    'posted_at': datetime.fromtimestamp(submission.created_utc),
-                    'likes': submission.score,
-                    'comments': submission.num_comments,
-                }
+            query += ' ' + ' '.join(
+                [k.strip() for k in topic.keywords.split(',') if k.strip()]
             )
+        seen: set[str] = set()
+        for sort in ("new", "hot"):
+            for submission in reddit.subreddit('all').search(
+                query, sort=sort, limit=25
+            ):
+                if submission.url in seen:
+                    continue
+                seen.add(submission.url)
+                posts.append(
+                    {
+                        'source': 'reddit',
+                        'content': submission.title,
+                        'url': submission.url,
+                        'posted_at': datetime.fromtimestamp(
+                            submission.created_utc
+                        ),
+                        'likes': submission.score,
+                        'comments': submission.num_comments,
+                    }
+                )
     except Exception as exc:
         errors.append(
             f"Reddit fetch failed: {exc}. Verify your Reddit credentials in .env."
@@ -197,16 +210,33 @@ def fetch_facebook(topic: Topic) -> Tuple[List[dict], List[str]]:
     return posts, errors
 
 
-def collect_topic(topic: Topic) -> List[str]:
+def collect_topic(
+    topic: Topic,
+    progress: Callable[[str], None] | None = None,
+    force: bool = False,
+) -> List[str]:
     """Collect posts for all sources for a given topic."""
     session = SessionLocal()
-    fetchers = [fetch_twitter, fetch_reddit, fetch_news, fetch_facebook]
+    db_topic = session.query(Topic).get(topic.id)
+    now = datetime.utcnow()
+    if db_topic and db_topic.last_collected and not force:
+        if now - db_topic.last_collected < timedelta(hours=1):
+            session.close()
+            return ["Collected recently; skipping."]
+    fetchers = [
+        ("twitter", fetch_twitter),
+        ("reddit", fetch_reddit),
+        ("news", fetch_news),
+        ("facebook", fetch_facebook),
+    ]
     errors: List[str] = []
-    for fetcher in fetchers:
-        posts, errs = fetcher(topic)
+    for name, fetcher in fetchers:
+        if progress:
+            progress(f"checking {name}...")
+        posts, errs = fetcher(db_topic)
         for item in posts:
             if not session.query(Post).filter_by(url=item['url']).first():
-                post = Post(topic_id=topic.id, **item)
+                post = Post(topic_id=db_topic.id, **item)
                 session.add(post)
         try:
             session.commit()
@@ -214,5 +244,11 @@ def collect_topic(topic: Topic) -> List[str]:
             session.rollback()
             errors.append(f"Database error: {exc}")
         errors.extend(errs)
+    if db_topic:
+        db_topic.last_collected = datetime.utcnow()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
     session.close()
     return errors
