@@ -647,6 +647,7 @@ else:
             import html as _html
 
             raw_content = fully_unescape(strip_think(str(row["content"])))
+            raw_content = _html.unescape(strip_think(str(row["content"])))
             # Plain text content
             content = _re.sub(r"<[^>]+>", "", raw_content).strip()
 
@@ -771,6 +772,9 @@ else:
             # Clean the content for display
             import re
             raw_content = fully_unescape(strip_think(str(row["content"])))
+            import html
+            import re
+            raw_content = html.unescape(strip_think(str(row["content"])))
             content = re.sub(r'<[^>]+>', '', raw_content)[:200]
             
             age = time_ago(row["posted_at"])
