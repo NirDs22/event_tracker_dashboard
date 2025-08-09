@@ -53,6 +53,19 @@ def contains_hebrew(text: str) -> bool:
     return bool(HEBREW_RE.search(text))
 
 
+def fully_unescape(text: str) -> str:
+    """Repeatedly unescape HTML entities until fully resolved."""
+    import html
+
+    previous = None
+    current = text
+    # Continue unescaping until there's no change
+    while current != previous:
+        previous = current
+        current = html.unescape(current)
+    return current
+
+
 @st.dialog("AI Summary")
 def show_link_summary(content: str) -> None:
     """Display a modal summarising a post's content."""
@@ -633,6 +646,7 @@ else:
             import re as _re
             import html as _html
 
+            raw_content = fully_unescape(strip_think(str(row["content"])))
             raw_content = _html.unescape(strip_think(str(row["content"])))
             # Plain text content
             content = _re.sub(r"<[^>]+>", "", raw_content).strip()
@@ -756,6 +770,8 @@ else:
 
         def render_post(row, key_prefix: str, in_columns: bool = False) -> None:
             # Clean the content for display
+            import re
+            raw_content = fully_unescape(strip_think(str(row["content"])))
             import html
             import re
             raw_content = html.unescape(strip_think(str(row["content"])))
