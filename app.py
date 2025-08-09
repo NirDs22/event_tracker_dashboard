@@ -657,6 +657,7 @@ else:
 
             content = clean_content(row["content"])
 
+
             # Title from first line of content (shorter for photos)
             max_title_length = 60 if is_photo else 80
             first_line = content.split("\n")[0]
@@ -779,6 +780,7 @@ else:
             import html as _html
 
             content = clean_content(row["content"])[:200]
+
             
             age = time_ago(row["posted_at"])
             source_icon = SOURCE_ICONS.get(row["source"], "📄")
