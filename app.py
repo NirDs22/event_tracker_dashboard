@@ -135,6 +135,11 @@ st.markdown("""
     .sidebar .stSelectbox > div > div > div {
         background-color: #f0f2f6;
     }
+
+    u {
+        text-underline-offset: 2px;
+        text-decoration-thickness: 2px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -625,10 +630,10 @@ else:
             Uses a single HTML block with all dynamic content escaped to avoid leaking HTML.
             """
             # Clean the content for display
-            raw_content = strip_think(str(row["content"]))
             import re as _re
             import html as _html
 
+            raw_content = _html.unescape(strip_think(str(row["content"])))
             # Plain text content
             content = _re.sub(r"<[^>]+>", "", raw_content).strip()
 
@@ -751,8 +756,9 @@ else:
 
         def render_post(row, key_prefix: str, in_columns: bool = False) -> None:
             # Clean the content for display
-            raw_content = strip_think(str(row["content"]))
+            import html
             import re
+            raw_content = html.unescape(strip_think(str(row["content"])))
             content = re.sub(r'<[^>]+>', '', raw_content)[:200]
             
             age = time_ago(row["posted_at"])
