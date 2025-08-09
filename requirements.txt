@@ -1,0 +1,16 @@
+streamlit
+pandas
+plotly
+wordcloud
+sqlalchemy
+apscheduler
+snscrape
+praw
+newsapi-python
+instaloader
+transformers
+python-dotenv
+ollama
+feedparser
+facebook-scraper
+lxml_html_clean
