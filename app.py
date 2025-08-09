@@ -53,6 +53,28 @@ def contains_hebrew(text: str) -> bool:
     return bool(HEBREW_RE.search(text))
 
 
+def clean_content(raw: str) -> str:
+    """Return plain text with inline links, stripping any HTML tags."""
+    import html as _html
+    import re as _re
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+    except Exception:
+        BeautifulSoup = None
+
+    raw_content = _html.unescape(strip_think(str(raw)))
+
+    if BeautifulSoup:
+        soup = BeautifulSoup(raw_content, "html.parser")
+        for a in soup.find_all("a"):
+            href = a.get("href")
+            if href:
+                a.replace_with(f"{a.get_text(' ', strip=True)} ({href})")
+        return soup.get_text(" ", strip=True)
+
+    return _re.sub(r"<[^>]+>", "", raw_content).strip()
+
+
 @st.dialog("AI Summary")
 def show_link_summary(content: str) -> None:
     """Display a modal summarising a post's content."""
@@ -532,7 +554,7 @@ else:
     if posts:
         df = pd.DataFrame([
             {
-                "content": p.content,
+                "content": clean_content(p.content),
                 "url": p.url,
                 "posted_at": p.posted_at,
                 "source": p.source,
@@ -630,20 +652,11 @@ else:
             Cleans any HTML from the content so tags aren't shown while keeping
             the underline and styling intact.
             """
-            import re as _re
             import html as _html
-            try:
-                from bs4 import BeautifulSoup  # type: ignore
-            except Exception:  # pragma: no cover - bs4 is optional
-                BeautifulSoup = None
+            import re as _re
 
-            raw_content = _html.unescape(strip_think(str(row["content"])))
+            content = clean_content(row["content"])
 
-            if BeautifulSoup:
-                # Robust HTML stripping to avoid leftover tags being displayed
-                content = BeautifulSoup(raw_content, "html.parser").get_text(" ", strip=True)
-            else:  # Fallback to regex if bs4 isn't installed
-                content = _re.sub(r"<[^>]+>", "", raw_content).strip()
 
             # Title from first line of content (shorter for photos)
             max_title_length = 60 if is_photo else 80
@@ -764,18 +777,10 @@ else:
 
         def render_post(row, key_prefix: str, in_columns: bool = False) -> None:
             # Clean the content for display
-            import html
-            import re
-            try:
-                from bs4 import BeautifulSoup  # type: ignore
-            except Exception:  # pragma: no cover
-                BeautifulSoup = None
+            import html as _html
 
-            raw_content = html.unescape(strip_think(str(row["content"])))
-            if BeautifulSoup:
-                content = BeautifulSoup(raw_content, "html.parser").get_text(" ", strip=True)[:200]
-            else:
-                content = re.sub(r'<[^>]+>', '', raw_content)[:200]
+            content = clean_content(row["content"])[:200]
+
             
             age = time_ago(row["posted_at"])
             source_icon = SOURCE_ICONS.get(row["source"], "📄")
@@ -805,7 +810,7 @@ else:
                         st.caption("📷 *Image preview unavailable*")
                 
                 # Content
-                st.markdown(content + "...")
+                st.markdown(_html.escape(content) + "...")
                 
                 # Bottom row with engagement and actions
                 col_engagement, col_link, col_ai = st.columns([2, 1, 1])
