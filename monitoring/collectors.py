@@ -716,11 +716,7 @@ def fetch_photos(topic: Topic) -> Tuple[List[dict], List[str]]:
                             'is_photo': True
                         })
                         found_images += 1
-                        
-                        # Debug print
-                        if source_url != img_url:
-                            print(f"Found different source: {source_url[:50]} vs {img_url[:50]}")
-                        
+                                                
                 except Exception as e:
                     continue
             
