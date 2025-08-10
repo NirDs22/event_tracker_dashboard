@@ -1530,7 +1530,9 @@ if st.session_state.selected_topic is None:
     else:
         # Topic overview with enhanced Apple-style cards
 
-        # Metrics summary with Apple-inspired design and more cool metrics
+
+
+        # Apple glassmorphic metrics summary (ultra-modern, Apple-style)
         total_posts = session.query(Post).count()
         active_topics = len([t for t in topics if t.last_collected])
         recently_updated = len([t for t in topics if t.last_collected and (datetime.utcnow() - t.last_collected).days < 1])
@@ -1544,35 +1546,64 @@ if st.session_state.selected_topic is None:
             if topic_post_counts and topic_post_counts[0][1] > 0:
                 most_active_topic, most_active_count = topic_post_counts[0]
 
-        # Apple-style metrics row (modern, more metrics)
         st_html(dedent(f"""
-        <div style="display: flex; justify-content: center; gap: 2.2rem; flex-wrap: wrap; margin-bottom: 1.2rem;">
-            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
-                <h3>{total_posts}</h3>
-                <p>Total Posts</p>
-            </div>
-            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
-                <h3>{active_topics}</h3>
-                <p>Active Topics</p>
-            </div>
-            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
-                <h3>{recently_updated}</h3>
-                <p>Topics Updated 24h</p>
-            </div>
-            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
-                <h3>{posts_today}</h3>
-                <p>Posts Today</p>
-            </div>
-            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
-                <h3>{posts_last_7d}</h3>
-                <p>Posts Last 7d</p>
-            </div>
-            <div class='metric-card' style='min-width: 180px; max-width: 220px;'>
-                <h3 style='font-size:1.3rem;'>{most_active_topic if most_active_topic else "-"}</h3>
-                <p>Most Active Topic</p>
+        <div style="
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            margin-bottom: 1.5rem;
+        ">
+            <div style="
+                background: rgba(255,255,255,0.55);
+                box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.12);
+                backdrop-filter: blur(18px) saturate(1.5);
+                -webkit-backdrop-filter: blur(18px) saturate(1.5);
+                border-radius: 2.2rem;
+                border: 1.5px solid rgba(255,255,255,0.25);
+                padding: 0.7rem 1.2rem 0.7rem 1.2rem;
+                display: grid;
+                grid-template-columns: repeat(6, minmax(80px, 1fr));
+                gap: 0.3rem 1.2rem;
+                min-width: 0;
+                max-width: 900px;
+                width: 100%;
+                margin: 0 auto;
+                position: relative;
+                overflow: visible;
+            ">
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <span style="font-size: 1.15rem; margin-bottom: 0.05rem; background: linear-gradient(135deg, #007AFF, #5856D6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">📰</span>
+                    <span style="font-size: 1.02rem; font-weight: 700; color: #222; font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;">{total_posts}</span>
+                    <span style="font-size: 0.72rem; color: #3A3A3C; font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif; font-weight: 500; margin-top: 0.04rem;">Total Posts</span>
+                </div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <span style="font-size: 1.15rem; margin-bottom: 0.05rem; background: linear-gradient(135deg, #34C759, #30B050); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">🎯</span>
+                    <span style="font-size: 1.02rem; font-weight: 700; color: #222; font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;">{active_topics}</span>
+                    <span style="font-size: 0.72rem; color: #3A3A3C; font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif; font-weight: 500; margin-top: 0.04rem;">Active Topics</span>
+                </div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <span style="font-size: 1.15rem; margin-bottom: 0.05rem; background: linear-gradient(135deg, #FF9500, #FF7A00); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">⚡</span>
+                    <span style="font-size: 1.02rem; font-weight: 700; color: #222; font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;">{recently_updated}</span>
+                    <span style="font-size: 0.72rem; color: #3A3A3C; font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif; font-weight: 500; margin-top: 0.04rem;">Topics Updated 24h</span>
+                </div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <span style="font-size: 1.15rem; margin-bottom: 0.05rem; background: linear-gradient(135deg, #2563EB, #1D4ED8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">📅</span>
+                    <span style="font-size: 1.02rem; font-weight: 700; color: #222; font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;">{posts_today}</span>
+                    <span style="font-size: 0.72rem; color: #3A3A3C; font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif; font-weight: 500; margin-top: 0.04rem;">Posts Today</span>
+                </div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <span style="font-size: 1.15rem; margin-bottom: 0.05rem; background: linear-gradient(135deg, #00B8D9, #0056CC); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">📈</span>
+                    <span style="font-size: 1.02rem; font-weight: 700; color: #222; font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;">{posts_last_7d}</span>
+                    <span style="font-size: 0.72rem; color: #3A3A3C; font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif; font-weight: 500; margin-top: 0.04rem;">Posts Last 7d</span>
+                </div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <span style="font-size: 1.15rem; margin-bottom: 0.05rem; background: linear-gradient(135deg, #8B5CF6, #7C3AED); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700;">🏆</span>
+                    <span style="font-size: 0.88rem; font-weight: 700; color: #222; font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;">{most_active_topic if most_active_topic else "-"}</span>
+                    <span style="font-size: 0.72rem; color: #3A3A3C; font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif; font-weight: 500; margin-top: 0.04rem;">Most Active Topic</span>
+                </div>
             </div>
         </div>
-        """), height=120)
+        """), height=100)
 
         st.markdown("---")
         
