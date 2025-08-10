@@ -1981,19 +1981,23 @@ else:
             st.markdown('<h3 class="section-heading">🕒 Recent Posts</h3>', unsafe_allow_html=True)
             # Filter out photos and YouTube from recent posts - they should only appear in their dedicated tabs
             recent_df = df[(df["source"] != "photos") & (df["source"] != "youtube")]
+            # Define tab order for sources: news and reddit equally first, then instagram, facebook, twitter
+            def _source_rank(s):
+                if s in ("news", "reddit"): return 0
+                elif s == "instagram": return 1
+                elif s == "facebook": return 2
+                elif s == "twitter": return 3
+                return 4
+            recent_df["_source_order"] = recent_df["source"].apply(_source_rank)
+            # Sort by source order, then by posted_at descending
+            recent_df = recent_df.sort_values(["_source_order", "posted_at"], ascending=[True, False])
             if not recent_df.empty:
                 # Gallery view with two columns for better browsing
-                recent_items = recent_df.sort_values("posted_at", ascending=False).head(10)
-                
-                # Create two-column layout
+                recent_items = recent_df.head(10)
                 col1, col2 = st.columns(2)
-                
                 for idx, (_, row) in enumerate(recent_items.iterrows()):
-                    # Alternate between columns
                     current_col = col1 if idx % 2 == 0 else col2
-                    
                     with current_col:
-                        # Use appropriate card renderer based on source
                         if row["source"] == "news":
                             render_news_card(row)
                         elif row["source"] == "reddit":
@@ -2002,13 +2006,22 @@ else:
                             render_facebook_card(row)
                         elif row["source"] == "instagram":
                             render_instagram_card(row)
+                        elif row["source"] == "twitter":
+                            # Render tweets in a simple card
+                            st.markdown(f"""
+                                <div style='background:rgba(255,255,255,0.7);border-radius:12px;padding:1rem;margin-bottom:1rem;box-shadow:0 2px 8px #0001;'>
+                                    <div style='font-size:1.1rem;line-height:1.5;'>{py_html.escape(row.get('text', row.get('content', '')))}</div>
+                                    <div style='margin-top:0.5rem;font-size:0.9rem;color:#888;'>
+                                        <a href='{row.get('url','')}' target='_blank'>View on Nitter</a> · {row.get('author','')} · {time_ago(row['posted_at'] if 'posted_at' in row else row.get('created_at'))}
+                                    </div>
+                                </div>
+                            """, unsafe_allow_html=True)
                         else:
-                            # Generic renderer for other sources
                             title = _first(row.get("title", ""), row.get("content", "")[:80])
                             summary = _first(row.get("summary", ""), row.get("content", ""))
                             image = row.get("image_url", "")
                             link = row.get("url", "")
-                            age = time_ago(row["posted_at"])
+                            age = time_ago(row["posted_at"] if "posted_at" in row else row.get("created_at"))
                             source_name = row["source"].title()
                             _render_card(title, summary, image, age, link, badge=source_name, topic_name=topic.name)
             else:
