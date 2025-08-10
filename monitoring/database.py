@@ -32,6 +32,8 @@ class Post(Base):
     id = Column(Integer, primary_key=True)
     topic_id = Column(Integer, ForeignKey('topics.id'))
     source = Column(String, index=True)
+    # Optional human-readable title (for News/Reddit/etc.)
+    title = Column(Text, nullable=True)
     content = Column(Text)
     url = Column(String, unique=True)
     posted_at = Column(DateTime)
@@ -72,8 +74,20 @@ def migrate_database():
             except Exception as e:
                 print(f"⚠️ Migration warning: {e}")
                 session.rollback()
+
+        # Ensure 'title' column exists for posts
+        try:
+            session.execute(text("SELECT title FROM posts LIMIT 1"))
+        except Exception:
+            try:
+                session.execute(text("ALTER TABLE posts ADD COLUMN title TEXT"))
+                session.commit()
+                print("✅ Database migrated: Added title column to posts table")
+            except Exception as e:
+                print(f"⚠️ Migration warning for title column: {e}")
+                session.rollback()
         
-        # Check for subreddit column
+    # Check for subreddit column
         try:
             session.execute(text("SELECT subreddit FROM posts LIMIT 1"))
         except Exception:

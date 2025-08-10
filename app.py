@@ -2,11 +2,19 @@ import os
 import re
 from pathlib import Path
 from datetime import datetime, timedelta
+from textwrap import dedent
 
 import streamlit as st
+from streamlit.components.v1 import html as st_html
+import html as py_html
 import pandas as pd
 import plotly.express as px
 from wordcloud import WordCloud
+
+try:
+    from bs4 import BeautifulSoup
+except Exception:
+    BeautifulSoup = None
 
 try:
     from dotenv import load_dotenv
@@ -18,6 +26,39 @@ from monitoring.database import init_db, SessionLocal, Topic, Post
 from monitoring.collectors import collect_topic, collect_all_topics_efficiently
 from monitoring.scheduler import start_scheduler, send_test_digest
 from monitoring.summarizer import summarize, strip_think
+
+
+# Utility functions
+def _first(*vals):
+    for v in vals:
+        if v not in (None, "", [], {}):
+            return v
+    return ""
+
+def _to_text(x):
+    """Convert any input to clean, usable text by removing HTML and normalizing whitespace."""
+    if x is None: return ""
+    s = str(x).strip()
+    
+    # Nothing to process for empty strings
+    if not s: 
+        return ""
+        
+    # Strip HTML to plain text if it looks like markup
+    if ("<" in s and ">" in s):
+        if BeautifulSoup is not None:
+            try:
+                s = BeautifulSoup(s, "html.parser").get_text(" ", strip=True)
+            except Exception:
+                # Fallback to regex if BeautifulSoup fails
+                s = re.sub(r'<[^>]*>', ' ', s)
+        else:
+            # No BeautifulSoup available, use regex
+            s = re.sub(r'<[^>]*>', ' ', s)
+    
+    # Normalize whitespace
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
 
 
 def time_ago(dt: datetime | None) -> str:
@@ -45,6 +86,630 @@ SOURCE_ICONS = {
 }
 
 
+# Card rendering functions
+def _is_meaningfully_different(text1, text2):
+    """Determine if two text strings are meaningfully different for display purposes"""
+    if not text1 or not text2:
+        return True
+        
+    # Normalize both texts for comparison
+    def normalize(text):
+        # Convert to lowercase and normalize whitespace
+        text = re.sub(r'\s+', ' ', text.lower().strip())
+        # Remove punctuation and special characters
+        text = re.sub(r'[^\w\s]', '', text)
+        return text
+        
+    # Get clean versions for comparison
+    norm1 = normalize(text1)
+    norm2 = normalize(text2)
+    
+    # Empty strings aren't meaningful
+    if not norm1 or not norm2:
+        return False
+    
+    # If they're exactly the same after normalization, they're not different
+    if norm1 == norm2:
+        return False
+    
+    # Length comparison - if one is much longer than the other, they're different
+    len1 = len(norm1)
+    len2 = len(norm2)
+    
+    # If one text is significantly longer, they're meaningfully different
+    if max(len1, len2) > min(len1, len2) * 1.7:  # One is 70% longer than the other
+        return True
+        
+    # If one is completely contained within the other, they're not meaningfully different
+    if norm1 in norm2 or norm2 in norm1:
+        return False
+    
+    # For short strings, be more strict with similarity comparison
+    if len(norm1) < 40 or len(norm2) < 40:
+        # Calculate text similarity ratio
+        from difflib import SequenceMatcher
+        similarity = SequenceMatcher(None, norm1, norm2).ratio()
+        if similarity > 0.5:  # More than 50% similar for short strings
+            return False
+    
+    # Calculate word overlap as a percentage
+    words1 = set(norm1.split())
+    words2 = set(norm2.split())
+    
+    if not words1 or not words2:
+        return False
+        
+    # Calculate overlap metrics
+    overlap = len(words1.intersection(words2))
+    smaller_set_size = min(len(words1), len(words2))
+    
+    # If high word overlap and similar lengths, not meaningfully different
+    if smaller_set_size > 0 and overlap / smaller_set_size > 0.7:
+        # Also check if the longer text contains substantially more words
+        larger_set_size = max(len(words1), len(words2))
+        # If the larger set has at least 40% more unique words, they're different
+        if larger_set_size > smaller_set_size * 1.4:
+            return True
+        return False
+        
+    return True
+
+def _add_topic_underlines(text, topic_name):
+    """Add underlines to topic mentions in text"""
+    if not topic_name or not text:
+        return text
+    
+    import re
+    # Escape the topic name for regex and create case-insensitive pattern
+    escaped_topic = py_html.escape(topic_name)
+    try:
+        pattern = re.compile(re.escape(escaped_topic), re.IGNORECASE)
+        result = pattern.sub(f'<u>{escaped_topic}</u>', py_html.escape(text))
+        return result
+    except Exception:
+        return py_html.escape(text)
+
+def _render_card(title, summary, image_url, age_text, link, badge="News", topic_name=None, height=None):
+    """Render a content card with proper title and summary display.
+    Contract:
+    - Inputs: raw title/summary may be None/HTML; image/link optional; badge text.
+    - Behavior: derive a sensible title when missing, show preview only if it adds info beyond title, and avoid duplicates.
+    - Output: Renders a Streamlit HTML component with consistent typography.
+    """
+    # Process and clean inputs - ensure we have fallbacks for missing data
+    raw_title = str(title or "").strip()
+    raw_summary = str(summary or "").strip()
+    
+    # Clean inputs with proper HTML sanitization
+    title = _to_text(raw_title)
+    summary = _to_text(raw_summary) or ""
+    image_url = _to_text(image_url) or ""
+    age_text = _to_text(age_text) or "Recently"
+    link = _to_text(link) or ""
+    
+    # If title is missing/placeholder, derive it from summary or link
+    def _derive_title():
+        # Use first sentence or first ~90 chars of summary
+        if summary:
+            first = summary.split('. ')[0].strip()
+            candidate = first if len(first) >= 12 else summary[:90]
+            candidate = candidate.strip().rstrip('.,;:')
+            if candidate:
+                return candidate
+        # Fallback to domain from link
+        if link:
+            try:
+                import urllib.parse as _url
+                netloc = _url.urlparse(link).netloc
+                if netloc:
+                    return netloc.replace('www.', '')
+            except Exception:
+                pass
+        return "Untitled"
+    
+    if not title or title.strip().lower() in {"untitled", "(untitled)", "unknown", ""}:
+        title = _derive_title()
+    
+    # Prepare title for display
+    if len(title) > 120:
+        title = title[:117] + "..."
+    
+    # Create HTML-safe title with topic highlighting if needed
+    title_html = _add_topic_underlines(title, topic_name) if topic_name else py_html.escape(title)
+    
+    # Process summary - ensure it adds value beyond the title and isn't self-duplicated
+    # 1) Remove title fragments from summary when they appear inside it
+    def _strip_title_from_summary(s, t):
+        if not s:
+            return s
+        cleaned = s
+        if t and len(t) >= 12:
+            try:
+                pattern = re.compile(re.escape(t), re.IGNORECASE)
+                cleaned = pattern.sub(" ", cleaned)
+            except Exception:
+                pass
+        # Deduplicate repeated segments split by common separators
+        parts = re.split(r"\s*[\-|\u2013\u2014\|]\s+", cleaned)
+        seen = set()
+        uniq_parts = []
+        for p in parts:
+            key = p.strip().lower()
+            if key and key not in seen:
+                uniq_parts.append(p.strip())
+                seen.add(key)
+        cleaned = " - ".join(uniq_parts) if uniq_parts else cleaned
+        # If the text is an exact double (e.g., X X), collapse to first half
+        half = len(cleaned) // 2
+        if len(cleaned) > 40 and cleaned[:half].strip().lower() == cleaned[half:].strip().lower():
+            cleaned = cleaned[:half].strip()
+        # Normalize whitespace
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
+    
+    # Keep a copy of the original summary for fallback
+    _orig_summary = summary
+    summary = _strip_title_from_summary(summary, title)
+
+    # Helper to choose the best preview text
+    def _choose_preview(orig_s: str, cleaned_s: str, t: str, badge_txt: str) -> str:
+        # Prefer cleaned summary if it's reasonably informative
+        candidate = cleaned_s or ""
+        # If too short, try to pick the next informative sentence from the original
+        if len(candidate) < 30 and orig_s:
+            sentences = re.split(r"(?<=[\.!?])\s+", orig_s)
+            for snt in sentences[:4]:
+                if len(snt) >= 20 and _is_meaningfully_different(t, snt):
+                    candidate = snt.strip()
+                    break
+        # If still short and it's News/Reddit, allow a lighter check
+        if len(candidate) < 30 and badge_txt in {"News", "Reddit"} and orig_s:
+            # Use the original but remove exact title tokens, then trim
+            fallback = _strip_title_from_summary(orig_s, t)
+            candidate = fallback if len(fallback) >= 20 else orig_s
+        candidate = (candidate or "").strip()
+        return candidate
+    
+    # First verify we actually have a summary and it's not just the title repeated
+    has_meaningful_summary = False
+    summary_html = ""
+    preview = _choose_preview(_orig_summary, summary, title, badge)
+    # Relax: show if preview has at least 20 chars or passes meaningful-different test
+    if preview and (len(preview) >= 20 or _is_meaningfully_different(title, preview)):
+        has_meaningful_summary = True
+        # Clamp length with soft sentence boundary
+        if len(preview) > 320:
+            cut = max(preview.rfind('. ', 220, 320), preview.rfind(' ', 260, 320))
+            cut = cut if cut != -1 else 300
+            preview = preview[:cut].rstrip() + "..."
+        summary_html = _add_topic_underlines(preview, topic_name) if topic_name else py_html.escape(preview)
+    
+    # Log for debugging if needed
+    # print(f"Title: {title}\nSummary: {summary}\nMeaningful: {has_meaningful_summary}")
+
+    # Apple-inspired card design with professional typography
+    html = dedent(f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <!-- Preload SF Pro fonts for better performance -->
+        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff" as="font" type="font/woff" crossorigin>
+        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff" as="font" type="font/woff" crossorigin>
+        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff" as="font" type="font/woff" crossorigin>
+        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff" as="font" type="font/woff" crossorigin>
+        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff" as="font" type="font/woff" crossorigin>
+        
+        <!-- Load SF Pro fonts -->
+        <style>
+            /* SF Pro Font declarations */
+            @font-face {{
+                font-family: 'SF Pro Display';
+                src: local('SF Pro Display'), 
+                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff') format('woff');
+                font-weight: 400;
+                font-display: swap;
+            }}
+            @font-face {{
+                font-family: 'SF Pro Display';
+                src: local('SF Pro Display Medium'), 
+                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff') format('woff');
+                font-weight: 500;
+                font-display: swap;
+            }}
+            @font-face {{
+                font-family: 'SF Pro Display';
+                src: local('SF Pro Display Semibold'), 
+                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff') format('woff');
+                font-weight: 600;
+                font-display: swap;
+            }}
+            @font-face {{
+                font-family: 'SF Pro Text';
+                src: local('SF Pro Text'), 
+                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff') format('woff');
+                font-weight: 400;
+                font-display: swap;
+            }}
+            @font-face {{
+                font-family: 'SF Pro Text';
+                src: local('SF Pro Text Medium'), 
+                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff') format('woff');
+                font-weight: 500;
+                font-display: swap;
+            }}
+        </style>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+                text-rendering: optimizeLegibility;
+            }}
+            
+            /* Add specific rule to enforce font family */
+            .title, .preview, .badge, .age, .view-btn {{
+                font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+            }}
+            
+            :root {{
+                --apple-blue: #007AFF;
+                --apple-blue-hover: #0056CC;
+                --apple-gray: #8E8E93;
+                --apple-gray-light: #F2F2F7;
+                --apple-text: #1C1C1E;
+                --apple-text-secondary: #3A3A3C;
+                --apple-text-tertiary: #8E8E93;
+                --apple-card: #FFFFFF;
+                --apple-border: #E5E5EA;
+                --apple-shadow: rgba(0, 0, 0, 0.08);
+                --apple-shadow-hover: rgba(0, 0, 0, 0.16);
+            }}
+            
+            body {{
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+                background: var(--apple-gray-light);
+                padding: 8px;
+                line-height: 1.5;
+                color: var(--apple-text);
+                font-size: 14px;
+            }}
+            
+            .card {{
+                background: var(--apple-card);
+                border-radius: 16px;
+                box-shadow: 0 4px 20px var(--apple-shadow);
+                border: 1px solid var(--apple-border);
+                overflow: hidden;
+                transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+                height: auto;
+                min-height: 200px;
+                display: flex;
+                flex-direction: column;
+                position: relative;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+            }}
+            
+            .card::before {{
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 4px;
+                background: linear-gradient(90deg, var(--apple-blue), #5856D6, #FF9500);
+            }}
+            
+            .card:hover {{
+                transform: translateY(-6px);
+                box-shadow: 0 12px 40px var(--apple-shadow-hover);
+            }}
+            
+            .card-header {{
+                padding: 16px 20px 12px 20px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid var(--apple-border);
+                background: rgba(248, 250, 252, 0.5);
+            }}
+            
+            .badge {{
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--apple-text);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+            }}
+            
+            .age {{
+                font-size: 11px;
+                color: var(--apple-text-tertiary);
+                font-weight: 500;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+            }}
+            
+            .card-body {{
+                padding: 0 24px;
+                flex-grow: 1;
+                display: flex;
+                flex-direction: column;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+            }}
+            
+            .title {{
+                font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+                font-size: 17px;
+                font-weight: 600;
+                color: var(--apple-text);
+                line-height: 1.3;
+                margin: 16px 0 12px 0;
+                letter-spacing: -0.01em;
+                display: -webkit-box;
+                -webkit-line-clamp: 3;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }}
+            
+            .image-container {{
+                margin: 14px 0 18px 0;
+                border-radius: 16px;
+                overflow: hidden;
+                background: var(--apple-gray-light);
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+            }}
+            
+            .image {{
+                width: 100%;
+                height: 180px;
+                object-fit: cover;
+                display: block;
+                transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            }}
+            
+            .image:hover {{
+                transform: scale(1.05);
+            }}
+            
+            .preview {{
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+                font-size: 14px;
+                color: var(--apple-text-secondary);
+                line-height: 1.5;
+                margin: 4px 0 20px 0;
+                padding: 0 1px;
+                display: -webkit-box;
+                -webkit-line-clamp: 4;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+                flex-grow: 1;
+                letter-spacing: 0;
+            }}
+            
+            .card-footer {{
+                padding: 16px 24px 24px 24px;
+                border-top: 1px solid var(--apple-border);
+                margin-top: auto;
+                background: rgba(248, 249, 250, 0.3);
+            }}
+            
+            .view-btn {{
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+                padding: 14px 20px;
+                background: linear-gradient(135deg, var(--apple-blue), var(--apple-blue-hover));
+                color: white;
+                text-decoration: none;
+                border-radius: 12px;
+                font-size: 15px;
+                font-weight: 600;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+                border: none;
+                cursor: pointer;
+                box-shadow: 0 4px 15px rgba(0, 122, 255, 0.3);
+                width: 100%;
+                min-height: 48px;
+            }}
+            
+            .view-btn:hover {{
+                background: linear-gradient(135deg, var(--apple-blue-hover), #003d99);
+                transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(0, 122, 255, 0.4);
+                text-decoration: none;
+                color: white;
+            }}
+            
+            .view-btn:active {{
+                transform: translateY(0);
+            }}
+            
+            .icon {{
+                font-size: 16px;
+            }}
+            
+            u {{
+                text-decoration: underline;
+                text-decoration-color: var(--apple-blue);
+                text-decoration-thickness: 2px;
+                text-underline-offset: 3px;
+                text-decoration-style: solid;
+            }}
+            
+            /* Ensure no text cutoff */
+            .card-body {{
+                min-height: 120px;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+            }}
+        </style>
+    </head>
+    <body>
+        <!-- Ensure fonts are loaded -->
+        <script>
+            document.fonts.ready.then(function() {{
+                document.body.classList.add('fonts-loaded');
+            }});
+        </script>
+        
+        <div class="card">
+            <div class="card-header">
+                <div class="badge">
+                    <span class="icon">{('📰' if badge == 'News' else '👽' if badge == 'Reddit' else '📘' if badge == 'Facebook' else '📺' if badge == 'YouTube' else '📷' if badge == 'Instagram' else '📄')}</span>
+                    {py_html.escape(badge)}
+                </div>
+                <div class="age">{py_html.escape(age_text)}</div>
+            </div>
+            
+            <div class="card-body">
+                <!-- Force consistent font styling -->
+                <style>
+                    .title, .preview {{
+                        font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+                    }}
+                </style>
+                
+                <!-- Title always visible -->
+                <div class="title">{title_html}</div>
+                
+                <!-- Image if available -->
+                {f'''<div class="image-container">
+                    <img class="image" src="{py_html.escape(image_url)}" alt="Content image" loading="lazy" referrerpolicy="no-referrer">
+                </div>''' if image_url else ''}
+                
+                <!-- Preview content only if it adds value beyond the title -->
+                {f'<div class="preview">{summary_html}</div>' if summary_html else ''}
+            </div>
+            
+            {f'''<div class="card-footer">
+                <a href="{py_html.escape(link)}" target="_blank" rel="noopener" class="view-btn">
+                    <span class="icon">🔗</span> Read More
+                </a>
+            </div>''' if link else ''}
+        </div>
+    </body>
+    </html>
+    """)
+    
+    # Calculate appropriate height based on content
+    if height is None:
+        # Base height for card with just title and header/footer
+        base = 280
+        
+        # Add space for image if present
+        if image_url: 
+            base += 220  # Space for image and margins
+            
+        # Add space for content preview based on its length
+        if summary_html:
+            # Roughly estimate 24px per line of text (assuming 60 chars per line)
+            text_length = len(summary_html)
+            estimated_lines = min(4, max(1, text_length // 60))
+            base += estimated_lines * 24 + 30  # Add lines plus margins
+            
+        # Add space for longer titles (assuming line breaks)
+        title_length = len(title)
+        if title_length > 30:
+            estimated_title_lines = min(3, max(1, title_length // 30))
+            base += (estimated_title_lines - 1) * 24  # Add space for extra lines
+            
+        # Ensure reasonable bounds for the card height
+        height = min(max(base, 250), 750)  # Minimum 250px, maximum 750px
+        
+    st_html(html, height=height, scrolling=False)
+
+def render_news_card(item):
+    title = _first(getattr(item, "title", None), item.get("title") if hasattr(item, 'get') else getattr(item, 'title', None))
+    summary = _first(getattr(item, "summary", None), getattr(item, "description", None), getattr(item, "content", None),
+                     item.get("summary") if hasattr(item, 'get') else None,
+                     item.get("description") if hasattr(item, 'get') else None,
+                     item.get("content") if hasattr(item, 'get') else None)
+    image = _first(getattr(item, "image_url", None), getattr(item, "image", None),
+                   item.get("image_url") if hasattr(item, 'get') else None,
+                   item.get("image") if hasattr(item, 'get') else None)
+    link = _first(getattr(item, "url", None), getattr(item, "link", None),
+                  item.get("url") if hasattr(item, 'get') else None,
+                  item.get("link") if hasattr(item, 'get') else None)
+    age = _first(getattr(item, "age_text", None), 
+                 time_ago(getattr(item, "posted_at", None)),
+                 item.get("age_text") if hasattr(item, 'get') else None)
+    _render_card(title, summary, image, age, link, badge="News")
+
+def render_reddit_card(post):
+    title = _first(getattr(post, "title", None), post.get("title") if hasattr(post, 'get') else None)
+    summary = _first(getattr(post, "selftext", None), getattr(post, "content", None),
+                     post.get("selftext") if hasattr(post, 'get') else None,
+                     post.get("content") if hasattr(post, 'get') else None)
+    thumb = _first(getattr(post, "thumbnail", None), getattr(post, "image_url", None),
+                   post.get("thumbnail") if hasattr(post, 'get') else None,
+                   post.get("image_url") if hasattr(post, 'get') else None)
+    # Build a proper link if we only have permalink
+    link = _first(getattr(post, "url", None), getattr(post, "permalink", None),
+                  post.get("url") if hasattr(post, 'get') else None,
+                  ("https://reddit.com" + post.get("permalink")) if hasattr(post, 'get') and post.get("permalink") else None)
+    age = _first(getattr(post, "age_text", None), 
+                 time_ago(getattr(post, "posted_at", None)),
+                 post.get("age_text") if hasattr(post, 'get') else None)
+    _render_card(title, summary, thumb, age, link, badge="Reddit")
+
+def render_facebook_card(post):
+    title = _first(getattr(post, "title", None), getattr(post, "page_name", None),
+                   post.get("title") if hasattr(post, 'get') else None,
+                   post.get("page_name") if hasattr(post, 'get') else None)
+    summary = _first(getattr(post, "text", None), getattr(post, "content", None),
+                     post.get("text") if hasattr(post, 'get') else None,
+                     post.get("content") if hasattr(post, 'get') else None)
+    image = _first(getattr(post, "image", None), getattr(post, "image_url", None),
+                   post.get("image") if hasattr(post, 'get') else None,
+                   post.get("image_url") if hasattr(post, 'get') else None)
+    link = _first(getattr(post, "post_url", None), getattr(post, "url", None),
+                  post.get("post_url") if hasattr(post, 'get') else None,
+                  post.get("url") if hasattr(post, 'get') else None)
+    age = _first(getattr(post, "age_text", None), 
+                 time_ago(getattr(post, "posted_at", None)),
+                 post.get("age_text") if hasattr(post, 'get') else None)
+    _render_card(title, summary, image, age, link, badge="Facebook")
+
+def render_youtube_card(video):
+    title = _first(getattr(video, "title", None), video.get("title") if hasattr(video, 'get') else None)
+    title = title[:min(124, len(title))].rjust(124)
+    summary = _first(getattr(video, "description", None), getattr(video, "content", None),
+                     video.get("description") if hasattr(video, 'get') else None,
+                     video.get("content") if hasattr(video, 'get') else None)
+    thumb = _first(getattr(video, "thumbnail", None), getattr(video, "image_url", None),
+                   video.get("thumbnail") if hasattr(video, 'get') else None,
+                   video.get("image_url") if hasattr(video, 'get') else None)
+    link = _first(getattr(video, "url", None), getattr(video, "watch_url", None),
+                  video.get("url") if hasattr(video, 'get') else None,
+                  video.get("watch_url") if hasattr(video, 'get') else None)
+    age = _first(getattr(video, "age_text", None), 
+                 time_ago(getattr(video, "posted_at", None)),
+                 video.get("age_text") if hasattr(video, 'get') else None)
+    _render_card(title, summary, thumb, age, link, badge="YouTube")
+
+def render_instagram_card(post):
+    title = _first(getattr(post, "username", None), post.get("username") if hasattr(post, 'get') else None)
+    summary = _first(getattr(post, "caption", None), getattr(post, "content", None),
+                     post.get("caption") if hasattr(post, 'get') else None,
+                     post.get("content") if hasattr(post, 'get') else None)
+    image = _first(getattr(post, "display_url", None), getattr(post, "image_url", None),
+                   post.get("display_url") if hasattr(post, 'get') else None,
+                   post.get("image_url") if hasattr(post, 'get') else None)
+    link = _first(getattr(post, "url", None), post.get("url") if hasattr(post, 'get') else None)
+    age = _first(getattr(post, "age_text", None), 
+                 time_ago(getattr(post, "posted_at", None)),
+                 post.get("age_text") if hasattr(post, 'get') else None)
+    _render_card(title, summary, image, age, link, badge="Instagram")
+
+
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
 DEFAULT_FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
@@ -65,14 +730,26 @@ def clean_content(raw: str) -> str:
     raw_content = _html.unescape(strip_think(str(raw)))
 
     if BeautifulSoup:
-        soup = BeautifulSoup(raw_content, "html.parser")
-        for a in soup.find_all("a"):
-            href = a.get("href")
-            if href:
-                a.replace_with(f"{a.get_text(' ', strip=True)} ({href})")
-        return soup.get_text(" ", strip=True)
+        # Only use BeautifulSoup if content actually looks like HTML
+        if "<" in raw_content and ">" in raw_content and ("</" in raw_content or "<!DOCTYPE" in raw_content or "<html" in raw_content):
+            try:
+                soup = BeautifulSoup(raw_content, "html.parser")
+                for a in soup.find_all("a"):
+                    href = a.get("href")
+                    if href:
+                        a.replace_with(f"{a.get_text(' ', strip=True)} ({href})")
+                return soup.get_text(" ", strip=True)
+            except Exception:
+                pass  # Fall back to regex if BeautifulSoup fails
 
-    return _re.sub(r"<[^>]+>", "", raw_content).strip()
+    # Fallback: use regex to strip all HTML tags
+    # First handle common HTML entities
+    raw_content = raw_content.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    # Remove all HTML tags
+    clean_text = _re.sub(r"<[^>]+>", "", raw_content)
+    # Clean up extra whitespace
+    clean_text = _re.sub(r"\s+", " ", clean_text).strip()
+    return clean_text
 
 
 @st.dialog("AI Summary")
@@ -97,75 +774,492 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
-st.markdown("""
+# Directly inject font links in the head section to ensure proper loading
+st.components.v1.html("""
+<link rel="preconnect" href="https://applesocial.s3.amazonaws.com" crossorigin>
+<link rel="preconnect" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/" crossorigin>
+<!-- SF Pro fonts preloaded for better performance -->
+<link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff" as="font" type="font/woff" crossorigin>
+<link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff" as="font" type="font/woff" crossorigin>
+<link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff" as="font" type="font/woff" crossorigin>
+<link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff" as="font" type="font/woff" crossorigin>
+<link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff" as="font" type="font/woff" crossorigin>
+""", height=0)
+
+# Apple-inspired Custom CSS with unified typography
+st.markdown(dedent("""
 <style>
-    .main-header {
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-        text-align: center;
-        color: white;
-    }
-    
-    .topic-card {
-        border-radius: 15px;
-        padding: 1.5rem;
-        margin: 1rem 0;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        transition: transform 0.2s ease;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    .topic-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
-    }
-    
-    .post-item {
-        background: #f8f9fa;
-        border-radius: 8px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-left: 4px solid #667eea;
-    }
-    
-    .source-badge {
-        display: inline-block;
-        padding: 0.25rem 0.5rem;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        font-weight: bold;
-        margin-left: 0.5rem;
-    }
-    
-    .reddit-badge { background: #ff4500; color: white; }
-    .news-badge { background: #0066cc; color: white; }
-    .instagram-badge { background: #e4405f; color: white; }
-    .facebook-badge { background: #1877f2; color: white; }
-    .youtube-badge { background: #ff0000; color: white; }
-    
-    .metric-card {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        text-align: center;
-    }
-    
-    .sidebar .stSelectbox > div > div > div {
-        background-color: #f0f2f6;
-    }
+/* SF Pro Font Definitions */
+@font-face {{
+    font-family: 'SF Pro Display';
+    src: local('SF Pro Display'), 
+         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff') format('woff');
+    font-weight: 400;
+    font-display: swap;
+}}
+@font-face {{
+    font-family: 'SF Pro Display';
+    src: local('SF Pro Display Medium'), 
+         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff') format('woff');
+    font-weight: 500;
+    font-display: swap;
+}}
+@font-face {{
+    font-family: 'SF Pro Display';
+    src: local('SF Pro Display Semibold'), 
+         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff') format('woff');
+    font-weight: 600;
+    font-display: swap;
+}}
+@font-face {{
+    font-family: 'SF Pro Text';
+    src: local('SF Pro Text'), 
+         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff') format('woff');
+    font-weight: 400;
+    font-display: swap;
+}}
+@font-face {{
+    font-family: 'SF Pro Text';
+    src: local('SF Pro Text Medium'), 
+         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff') format('woff');
+    font-weight: 500;
+    font-display: swap;
+}}
 
-    u {
-        text-underline-offset: 2px;
-        text-decoration-thickness: 2px;
-    }
+/* Preload fonts for better performance */
+
+/* Global Apple-inspired styling */
+* {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "kern", "liga", "calt";
+}
+
+/* Root variables for consistent theming */
+:root {
+    --apple-blue: #007AFF;
+    --apple-blue-hover: #0056CC;
+    --apple-gray: #8E8E93;
+    --apple-gray-light: #F6F6F7;
+    --apple-gray-medium: #AEAEB2;
+    --apple-text: #1C1C1E;
+    --apple-text-secondary: #3A3A3C;
+    --apple-background: #FFFFFF;
+    --apple-card: #FFFFFF;
+    --apple-border: #E5E5EA;
+    --apple-shadow: rgba(0, 0, 0, 0.08);
+    --apple-shadow-hover: rgba(0, 0, 0, 0.16);
+    --sidebar-bg: #F6F6F7;
+    --sidebar-border: #E5E5EA;
+}
+
+/* Force consistent fonts across ALL elements */
+html, body, div, span, applet, object, iframe,
+h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+a, abbr, acronym, address, big, cite, code,
+del, dfn, em, img, ins, kbd, q, s, samp,
+small, strike, strong, sub, sup, tt, var,
+b, u, i, center,
+dl, dt, dd, ol, ul, li,
+fieldset, form, label, legend,
+table, caption, tbody, tfoot, thead, tr, th, td,
+article, aside, canvas, details, embed, 
+figure, figcaption, footer, header, hgroup, 
+menu, nav, output, ruby, section, summary,
+time, mark, audio, video {
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+}
+
+/* Headings use SF Pro Display */
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+    font-weight: 600 !important;
+    color: var(--apple-text) !important;
+    letter-spacing: -0.01em !important;
+    line-height: 1.3 !important;
+    margin-bottom: 0.5em !important;
+    margin-top: 1em !important;
+}
+
+h1 { font-size: 32px !important; }
+h2 { font-size: 26px !important; }
+h3 { font-size: 22px !important; }
+h4 { font-size: 18px !important; }
+
+/* Override ALL Streamlit component fonts */
+.stApp, .stApp * {
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+    letter-spacing: -0.01em;
+}
+
+/* Specifically target all text elements */
+.stMarkdown, .stMarkdown *, .stText, .stText *, .stCaption, .stCaption *, 
+.stWrite, .stWrite *, .stMetric, .stMetric *, p, p *, span, span *, 
+div, div *, label, label *, .stSelectbox, .stSelectbox *, .stButton, .stButton *,
+.stTabs, .stTabs *, .stInfo, .stInfo *, .stSuccess, .stSuccess *, 
+.stWarning, .stWarning *, .stError, .stError * {
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+    color: var(--apple-text) !important;
+}
+
+/* Main app background */
+/* Main app background: white */
+.main .block-container {
+    background-color: #fff !important;
+    padding: 1.5rem !important;
+    max-width: 1200px !important;
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+    line-height: 1.5 !important;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.04);
+    border-radius: 18px;
+}
+
+/* Beautiful main header */
+.main-header {
+    background: linear-gradient(135deg, var(--apple-blue), #5856D6);
+    padding: 2rem 1.2rem;
+    border-radius: 20px;
+    margin-bottom: 1.2rem;
+    text-align: center;
+    color: white;
+    box-shadow: 0 8px 24px rgba(0, 122, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.main-header h1 {
+    color: white !important;
+    font-weight: 700 !important;
+    font-size: 2rem !important;
+    margin-bottom: 0.5rem !important;
+    letter-spacing: -0.01em !important;
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+}
+
+/* Section headings */
+.section-heading {
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+    font-weight: 600 !important;
+    color: var(--apple-text) !important;
+    margin-bottom: 0.7rem !important;
+    letter-spacing: -0.01em !important;
+    font-size: 1.15rem !important;
+}
+
+h2.section-heading {
+    font-size: 1.25rem !important;
+    margin-top: 1.2rem !important;
+}
+
+h3.section-heading {
+    font-size: 1.1rem !important;
+    margin-top: 1rem !important;
+}
+
+.main-header p {
+    color: rgba(255, 255, 255, 0.9) !important;
+    font-size: 1.125rem !important;
+    font-weight: 400 !important;
+    line-height: 1.5 !important;
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+}
+
+/* Enhanced metric cards */
+.metric-card {
+    background: var(--apple-card);
+    padding: 1.1rem 0.8rem;
+    border-radius: 14px;
+    box-shadow: 0 2px 10px var(--apple-shadow);
+    text-align: center;
+    border: 1px solid var(--apple-border);
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    position: relative;
+    overflow: hidden;
+}
+
+.metric-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--apple-blue), #5856D6, #FF9500);
+}
+
+.metric-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 30px var(--apple-shadow-hover);
+}
+
+.metric-card h3 {
+    font-size: 2.5rem !important;
+    font-weight: 700 !important;
+    margin: 0.5rem 0 !important;
+    background: linear-gradient(135deg, var(--apple-blue), #5856D6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+}
+
+.metric-card p {
+    font-size: 0.9rem !important;
+    font-weight: 500 !important;
+    color: var(--apple-text-secondary) !important;
+    margin: 0 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+}
+
+/* Enhanced topic cards */
+.topic-card {
+    background: var(--apple-card);
+    border-radius: 20px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+    box-shadow: 0 4px 20px var(--apple-shadow);
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    border: 1px solid var(--apple-border);
+    position: relative;
+    overflow: hidden;
+}
+
+.topic-card:hover {
+    transform: translateY(-6px) scale(1.02);
+    box-shadow: 0 12px 40px var(--apple-shadow-hover);
+}
+
+/* Force button fonts */
+.stButton > button, button {
+    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
+    font-weight: 600 !important;
+    border-radius: 12px !important;
+    transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) !important;
+    border: none !important;
+    padding: 0.75rem 1.5rem !important;
+    font-size: 0.9rem !important;
+}
+
+.stButton > button[kind="primary"], button[kind="primary"] {
+    background: linear-gradient(135deg, var(--apple-blue), var(--apple-blue-hover)) !important;
+    color: white !important;
+    box-shadow: 0 4px 15px rgba(0, 122, 255, 0.3) !important;
+}
+
+.stButton > button:hover, button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important;
+}
+
+/* Enhanced sidebar */
+/* Enhanced sidebar with light grey background */
+.css-1d391kg, .css-1kyxreq, [data-testid="stSidebar"] {
+    background-color: var(--sidebar-bg) !important;
+    border-right: 1px solid var(--sidebar-border) !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+    box-shadow: 2px 0 8px rgba(0,0,0,0.03);
+}
+
+/* Better tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    background-color: var(--light-gray);
+    border-radius: 10px;
+    padding: 4px;
+}
+
+.stTabs [data-baseweb="tab"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+    font-weight: 500 !important;
+    padding: 12px 20px !important;
+    border-radius: 8px !important;
+    background-color: transparent !important;
+    color: var(--text-secondary) !important;
+    border: none !important;
+    transition: all 0.2s ease !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    background-color: var(--card-bg) !important;
+    color: var(--text-primary) !important;
+}
+
+.stTabs [data-baseweb="tab"][aria-selected="true"] {
+    background-color: var(--card-bg) !important;
+    color: var(--text-primary) !important;
+    box-shadow: 0 2px 8px var(--card-shadow) !important;
+}
+
+/* Metric display improvements */
+.stMetric {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+}
+
+.stMetric > div {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+}
+
+.stMetric [data-testid="metric-value"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 2rem !important;
+}
+
+.stMetric [data-testid="metric-label"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+    font-weight: 500 !important;
+    color: var(--text-secondary) !important;
+}
+
+/* Info boxes */
+.stInfo, .stSuccess, .stWarning, .stError {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+    border-radius: 10px !important;
+    border: none !important;
+}
+
+/* Input fields */
+.stTextInput input, .stSelectbox select, .stTextArea textarea {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--card-border) !important;
+    background-color: var(--card-bg) !important;
+}
+
+/* Hide Streamlit branding */
+.css-164nlkn, #MainMenu, footer, header {
+    display: none !important;
+}
+
+/* Underlines for highlighted content */
+u {
+    text-underline-offset: 3px;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--primary-blue);
+    text-decoration-style: solid;
+}
+
+/* Source badges */
+.source-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    margin: 2px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.reddit-badge { background: linear-gradient(135deg, #FF4500, #CC3400); color: white; }
+.news-badge { background: linear-gradient(135deg, #2563EB, #1D4ED8); color: white; }
+.instagram-badge { background: linear-gradient(135deg, #E4405F, #C13584); color: white; }
+.facebook-badge { background: linear-gradient(135deg, #1877F2, #1565C0); color: white; }
+.youtube-badge { background: linear-gradient(135deg, #FF0000, #CC0000); color: white; }
+.photos-badge { background: linear-gradient(135deg, #8B5CF6, #7C3AED); color: white; }
+
+/* Force font consistency on ALL possible Streamlit elements */
+[data-testid="stSidebar"] *, 
+[data-testid="column"] *,
+[data-testid="stVerticalBlock"] *,
+[data-testid="stHorizontalBlock"] *,
+[data-testid="stMetric"] *,
+[data-testid="stText"] *,
+[data-testid="stMarkdown"] *,
+[data-testid="baseButton-secondary"] *,
+[data-testid="baseButton-primary"] *,
+[data-baseweb="tab"] *,
+[data-baseweb="tab-list"] *,
+[data-baseweb="input"] *,
+[data-baseweb="select"] *,
+[data-baseweb="checkbox"] *,
+[data-baseweb="textarea"] *,
+.stApp header,
+.stApp footer,
+.element-container,
+.css-1kyxreq,
+.main .block-container,
+.streamlit-expanderHeader,
+.stAlert * {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+}
+
+/* Ensure plotly charts have consistent fonts */
+.js-plotly-plot *,
+.plotly-graph-div *,
+.svg-container * {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+}
+
+/* Apply the font to ALL components that might not be covered */
+body * {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
+}
 </style>
-""", unsafe_allow_html=True)
+"""), unsafe_allow_html=True)
 
-st.markdown('<div class="main-header"><h1>📰 Social & News Monitoring Dashboard</h1><p>Track topics across social media and news sources with AI-powered insights</p></div>', unsafe_allow_html=True)
+st_html(dedent("""
+    <div style="
+        background: #fff;
+        border-radius: 20px;
+        margin: 2rem 0 2.5rem 0;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.07);
+        padding: 2.5rem 1.5rem 2rem 1.5rem;
+        text-align: center;
+        max-width: 700px;
+        margin-left: auto;
+        margin-right: auto;
+        border: 1px solid #ececec;
+    ">
+        <h1 style="
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+            font-weight: 700;
+            font-size: 2.2rem;
+            margin-bottom: 0.5rem;
+            color: #222;
+            letter-spacing: -0.01em;
+        ">📰 Social & News Monitor</h1>
+        <p style="
+            font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+            font-size: 1.1rem;
+            color: #444;
+            margin-bottom: 1.5rem;
+            opacity: 0.85;
+        ">
+            Effortlessly track topics across news and social media, with AI-powered insights.
+        </p>
+        <div style="
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.5rem;
+        ">
+            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #007AFF;">
+                📰 <span style="font-size: 0.98rem; color: #444;">News</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #FF4500;">
+                👽 <span style="font-size: 0.98rem; color: #444;">Reddit</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #E4405F;">
+                📷 <span style="font-size: 0.98rem; color: #444;">Instagram</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #1877F2;">
+                📘 <span style="font-size: 0.98rem; color: #444;">Facebook</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #FF0000;">
+                📺 <span style="font-size: 0.98rem; color: #444;">YouTube</span>
+            </div>
+        </div>
+    </div>
+    """),
+    height=180
+)
 
 if not ENV_LOADED:
     st.sidebar.info(
@@ -179,15 +1273,6 @@ if not os.getenv("REDDIT_CLIENT_ID") or not os.getenv("REDDIT_CLIENT_SECRET"):
         "Create a Reddit app and set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env."
     )
 
-st.sidebar.success(
-    "✅ Instagram & Facebook enabled (no accounts required). "
-    "Will search for public posts via web search."
-)
-
-st.sidebar.success(
-    "✅ Photo search enabled - scrapes real images from the web. "
-    "No API keys required (though Unsplash/Pexels keys will give better results)."
-)
 
 if not os.getenv("NEWSAPI_KEY"):
     st.sidebar.warning(
@@ -204,6 +1289,7 @@ except Exception:
 
 try:
     import requests
+    import re
     import bs4  # type: ignore  # noqa: F401
 except Exception:
     st.sidebar.info(
@@ -212,7 +1298,7 @@ except Exception:
 
 if not os.getenv("UNSPLASH_ACCESS_KEY") and not os.getenv("PEXELS_API_KEY"):
     st.sidebar.error(
-        "� **No Photo Search Configured**\n\n"
+        "🚨 **No Photo Search Configured**\n\n"
         "To get actual photos of your subjects:\n\n"
         "1. **Unsplash** (recommended): Get free key at unsplash.com/developers\n"
         "2. **Pexels**: Get free key at pexels.com/api\n\n"
@@ -230,8 +1316,6 @@ if not os.getenv("SMTP_HOST") and not os.getenv("SMTP_SERVER"):
     st.sidebar.info(
         "📧 Email digests disabled. Set SMTP_SERVER, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in .env to enable."
     )
-else:
-    st.sidebar.success("✅ Email configuration found - digests enabled!")
 
 if not os.getenv("OLLAMA_MODEL"):
     st.sidebar.info(
@@ -408,50 +1492,92 @@ topics = session.query(Topic).all()
 
 if st.session_state.selected_topic is None:
     if not topics:
-        st.markdown("""
-        <div style="text-align: center; padding: 3rem; background: #f8f9fa; border-radius: 15px; margin: 2rem 0;">
-            <h2>🚀 Welcome to Your Monitoring Dashboard!</h2>
-            <p style="font-size: 1.1rem; color: #666;">Start by adding topics to monitor in the sidebar.</p>
-            <p>Track conversations about your interests across social media and news sources.</p>
+        # Beautiful welcome screen
+        st_html(dedent("""
+        <div style="
+            text-align: center; 
+            padding: 4rem 2rem; 
+            background: linear-gradient(135deg, #007AFF, #5856D6); 
+            border-radius: 24px; 
+            margin: 2rem 0;
+            color: white;
+            box-shadow: 0 12px 40px rgba(0, 122, 255, 0.25);
+        ">
+            <h1 style="font-size: 3rem; margin-bottom: 1rem; font-weight: 700;">🚀 Welcome!</h1>
+            <p style="font-size: 1.25rem; margin-bottom: 2rem; opacity: 0.9; line-height: 1.6;">
+                Ready to track what matters most to you?<br>
+                Start by adding your first topic in the sidebar.
+            </p>
+            <div style="
+                background: rgba(255, 255, 255, 0.15); 
+                border-radius: 16px; 
+                padding: 1.5rem; 
+                margin-top: 2rem;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            ">
+                <h3 style="margin-bottom: 1rem;">✨ What you can track:</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; text-align: left;">
+                    <div>📰 <strong>News Articles</strong><br><small>Stay updated with latest stories</small></div>
+                    <div>👽 <strong>Reddit Posts</strong><br><small>Monitor community discussions</small></div>
+                    <div>📷 <strong>Instagram</strong><br><small>Track visual content & posts</small></div>
+                    <div>📘 <strong>Facebook</strong><br><small>Follow public pages & posts</small></div>
+                    <div>📺 <strong>YouTube</strong><br><small>Find relevant videos & channels</small></div>
+                    <div>🖼️ <strong>Photos</strong><br><small>Discover images from web search</small></div>
+                </div>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+        """), height=500)
     else:
-        # Topic overview with enhanced cards
-        st.markdown("## 📊 **Your Topics Overview**")
-        
-        # Metrics summary
+        # Topic overview with enhanced Apple-style cards
+
+        # Metrics summary with Apple-inspired design and more cool metrics
         total_posts = session.query(Post).count()
         active_topics = len([t for t in topics if t.last_collected])
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3 style="color: #667eea; margin: 0;">📈 {total_posts}</h3>
-                <p style="margin: 0;">Total Posts Collected</p>
+        recently_updated = len([t for t in topics if t.last_collected and (datetime.utcnow() - t.last_collected).days < 1])
+        posts_today = session.query(Post).filter(Post.posted_at >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)).count()
+        posts_last_7d = session.query(Post).filter(Post.posted_at >= datetime.utcnow() - timedelta(days=7)).count()
+        most_active_topic = None
+        most_active_count = 0
+        if topics:
+            topic_post_counts = [(t.name, session.query(Post).filter_by(topic_id=t.id).count()) for t in topics]
+            topic_post_counts.sort(key=lambda x: x[1], reverse=True)
+            if topic_post_counts and topic_post_counts[0][1] > 0:
+                most_active_topic, most_active_count = topic_post_counts[0]
+
+        # Apple-style metrics row (modern, more metrics)
+        st_html(dedent(f"""
+        <div style="display: flex; justify-content: center; gap: 2.2rem; flex-wrap: wrap; margin-bottom: 1.2rem;">
+            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
+                <h3>{total_posts}</h3>
+                <p>Total Posts</p>
             </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3 style="color: #51cf66; margin: 0;">🎯 {len(topics)}</h3>
-                <p style="margin: 0;">Active Topics</p>
+            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
+                <h3>{active_topics}</h3>
+                <p>Active Topics</p>
             </div>
-            """, unsafe_allow_html=True)
-            
-        with col3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3 style="color: #ff6b6b; margin: 0;">⚡ {active_topics}</h3>
-                <p style="margin: 0;">Recently Updated</p>
+            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
+                <h3>{recently_updated}</h3>
+                <p>Topics Updated 24h</p>
             </div>
-            """, unsafe_allow_html=True)
-        
+            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
+                <h3>{posts_today}</h3>
+                <p>Posts Today</p>
+            </div>
+            <div class='metric-card' style='min-width: 140px; max-width: 180px;'>
+                <h3>{posts_last_7d}</h3>
+                <p>Posts Last 7d</p>
+            </div>
+            <div class='metric-card' style='min-width: 180px; max-width: 220px;'>
+                <h3 style='font-size:1.3rem;'>{most_active_topic if most_active_topic else "-"}</h3>
+                <p>Most Active Topic</p>
+            </div>
+        </div>
+        """), height=120)
+
         st.markdown("---")
         
-        # Topic cards in grid layout
-        cols = st.columns(3)
+        # Topic cards in responsive grid layout
+        cols = st.columns(min(len(topics), 3))
         for idx, topic in enumerate(topics):
             with cols[idx % 3]:
                 posts = (
@@ -465,81 +1591,210 @@ if st.session_state.selected_topic is None:
                 if topic.last_viewed and posts:
                     new_posts_count = sum(1 for p in posts if p.posted_at > topic.last_viewed)
                 
-                # Enhanced topic card
-                st.markdown(f"""
-                <div class="topic-card" style="background: linear-gradient(135deg, {topic.color}15, {topic.color}25);">
-                    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-                        <span style="font-size: 2rem; margin-right: 0.5rem;">{topic.icon}</span>
+                # Enhanced Apple-style topic card
+                st_html(dedent(f"""
+                <div style="
+                    background: #FFFFFF;
+                    border-radius: 20px;
+                    padding: 2rem 1.5rem;
+                    margin: 1rem 0;
+                    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+                    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+                    border: 1px solid #E5E5EA;
+                    position: relative;
+                    overflow: hidden;
+                ">
+                    <div style="
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        height: 4px;
+                        background: linear-gradient(90deg, {topic.color}, {topic.color}99);
+                    "></div>
+                    
+                    <div style="display: flex; align-items: center; margin-bottom: 1.5rem;">
+                        <span style="font-size: 2.5rem; margin-right: 1rem;">{topic.icon}</span>
                         <div>
-                            <h3 style="margin: 0; color: {topic.color};">{topic.name}</h3>
-                            <p style="margin: 0; font-size: 0.9rem; color: #666;">
+                            <h3 style="
+                                margin: 0; 
+                                color: {topic.color}; 
+                                font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                                font-weight: 600;
+                                font-size: 1.25rem;
+                                letter-spacing: -0.01em;
+                            ">{topic.name}</h3>
+                            <p style="
+                                margin: 0.25rem 0 0 0; 
+                                font-size: 0.9rem; 
+                                color: #8E8E93;
+                                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                                font-weight: 500;
+                            ">
                                 {len(posts)} posts • Last: {time_ago(topic.last_collected)}
                             </p>
                         </div>
                     </div>
-                """, unsafe_allow_html=True)
+                    
+                    <div style="
+                        background: #F2F2F7;
+                        border-radius: 12px;
+                        padding: 1rem;
+                        margin-bottom: 1rem;
+                        border: 1px solid #E5E5EA;
+                    ">
+                        <p style="
+                            margin: 0;
+                            font-size: 0.85rem;
+                            color: #3A3A3C;
+                            font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                        ">
+                            <strong>Keywords:</strong> {topic.keywords or "None specified"}<br>
+                            <strong>Profiles:</strong> {len(topic.profiles.split(',')) if topic.profiles else 0} monitored
+                        </p>
+                    </div>
+                </div>
+                """), height=200)
                 
                 if posts:
-                    # Mini chart
+                    # Mini analytics chart with consistent styling
                     df_mini = pd.DataFrame([{"posted_at": p.posted_at} for p in posts])
                     df_mini["date"] = df_mini["posted_at"].dt.date
                     daily_mini = df_mini.groupby("date").size()
-                    st.line_chart(daily_mini, height=80)
                     
-                    # Source breakdown
-                    sources = df_mini = pd.DataFrame([{"source": p.source} for p in posts])
+                    # Create a simple line chart with better styling
+                    fig_mini = px.line(
+                        x=daily_mini.index, 
+                        y=daily_mini.values,
+                        title=None,
+                        color_discrete_sequence=[topic.color]
+                    )
+                    fig_mini.update_layout(
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        height=80,
+                        margin=dict(l=0, r=0, t=0, b=0),
+                        showlegend=False,
+                        xaxis=dict(showgrid=False, showticklabels=False, title=""),
+                        yaxis=dict(showgrid=False, showticklabels=False, title=""),
+                        font=dict(
+                            family="SF Pro Text, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, system-ui, sans-serif",
+                            size=10,
+                            color="#1C1C1E"
+                        )
+                    )
+                    st.plotly_chart(fig_mini, use_container_width=True, config={'displayModeBar': False})
+                    
+                    # Source breakdown with enhanced badges
+                    sources = pd.DataFrame([{"source": p.source} for p in posts])
                     source_counts = sources.groupby("source").size()
                     
                     source_badges = ""
                     for source, count in source_counts.items():
                         icon = SOURCE_ICONS.get(source, "📄")
-                        badge_class = f"{source}-badge" if source in ["reddit", "news", "instagram", "facebook", "youtube"] else ""
+                        badge_class = f"{source}-badge"
                         source_badges += f'<span class="source-badge {badge_class}">{icon} {count}</span> '
                     
-                    st.markdown(source_badges, unsafe_allow_html=True)
+                    st_html(source_badges, height=50)
                     
                     if new_posts_count > 0:
-                        st.markdown(f"""
-                        <div style="background: #51cf66; color: white; padding: 0.5rem; 
-                                   border-radius: 15px; text-align: center; margin: 0.5rem 0;">
-                            <strong>🔔 {new_posts_count} new posts!</strong>
+                        st_html(dedent(f"""
+                        <div style="
+                            background: linear-gradient(135deg, #34C759, #30B050); 
+                            color: white; 
+                            padding: 0.75rem; 
+                            border-radius: 12px; 
+                            text-align: center; 
+                            margin: 0.5rem 0;
+                            font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                            font-weight: 600;
+                            box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3);
+                        ">
+                            🔔 {new_posts_count} new posts!
                         </div>
-                        """, unsafe_allow_html=True)
+                        """), height=60)
                 else:
                     st.info("No posts collected yet")
                 
+                # Apple-style explore button
                 if st.button("🔍 **Explore**", key=f"open_{topic.id}", use_container_width=True, type="primary"):
                     st.session_state.selected_topic = topic.id
                     st.rerun()
                 
-                st.markdown("</div>", unsafe_allow_html=True)
 else:
-    topic = session.query(Topic).get(st.session_state.selected_topic)
+    topic = session.get(Topic, st.session_state.selected_topic)
     if not topic:
         st.error("Topic not found!")
         st.session_state.selected_topic = None
         st.rerun()
         
-    # Enhanced topic header
-    col1, col2 = st.columns([1, 0.2])
+    # Enhanced Apple-style topic header
+    col1, col2 = st.columns([1, 0.15])
     with col1:
-        st.markdown(f"""
-        <div style="background: linear-gradient(135deg, {topic.color}, {topic.color}aa); 
-                   padding: 2rem; border-radius: 15px; margin-bottom: 2rem;">
-            <h1 style="color: white; margin: 0; display: flex; align-items: center;">
-                <span style="margin-right: 1rem; font-size: 3rem;">{topic.icon}</span>
-                {topic.name}
-            </h1>
-            <p style="color: rgba(255,255,255,0.9); margin: 0.5rem 0 0 0;">
-                📅 Last collected: {time_ago(topic.last_collected)} | 
-                🔍 Keywords: {topic.keywords or "None"} | 
-                👥 Profiles: {len(topic.profiles.split(',')) if topic.profiles else 0}
-            </p>
+        st_html(dedent(f"""
+        <div style="
+            background: linear-gradient(135deg, {topic.color}, {topic.color}cc); 
+            padding: 3rem 2.5rem; 
+            border-radius: 24px; 
+            margin-bottom: 2rem;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            position: relative;
+            overflow: hidden;
+        ">
+            <div style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: url('data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><circle cx=\"20\" cy=\"20\" r=\"1\" fill=\"white\" opacity=\"0.1\"/><circle cx=\"80\" cy=\"60\" r=\"1\" fill=\"white\" opacity=\"0.1\"/><circle cx=\"40\" cy=\"80\" r=\"1\" fill=\"white\" opacity=\"0.1\"/></svg>');
+            "></div>
+            
+            <div style="position: relative; z-index: 1;">
+                <div style="display: flex; align-items: center; margin-bottom: 1.5rem;">
+                    <span style="font-size: 4rem; margin-right: 1.5rem; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));">{topic.icon}</span>
+                    <div>
+                        <h1 style="
+                            color: white; 
+                            margin: 0; 
+                            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                            font-weight: 700;
+                            font-size: 2.75rem;
+                            letter-spacing: -0.02em;
+                            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                        ">{topic.name}</h1>
+                    </div>
+                </div>
+                
+                <div style="
+                    background: rgba(255, 255, 255, 0.15);
+                    border-radius: 16px;
+                    padding: 1.5rem;
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    backdrop-filter: blur(10px);
+                ">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                        <div>
+                            <div style="color: rgba(255,255,255,0.8); font-size: 0.9rem; font-weight: 500; margin-bottom: 0.25rem;">Last Updated</div>
+                            <div style="color: white; font-weight: 600; font-size: 1.1rem;">📅 {time_ago(topic.last_collected)}</div>
+                        </div>
+                        <div>
+                            <div style="color: rgba(255,255,255,0.8); font-size: 0.9rem; font-weight: 500; margin-bottom: 0.25rem;">Keywords</div>
+                            <div style="color: white; font-weight: 600; font-size: 1.1rem;">🔍 {topic.keywords or "None specified"}</div>
+                        </div>
+                        <div>
+                            <div style="color: rgba(255,255,255,0.8); font-size: 0.9rem; font-weight: 500; margin-bottom: 0.25rem;">Profiles Monitored</div>
+                            <div style="color: white; font-weight: 600; font-size: 1.1rem;">👥 {len(topic.profiles.split(',')) if topic.profiles else 0}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+        """), height=240)
     
     with col2:
-        st.markdown("<br>", unsafe_allow_html=True)  # Spacing
+        st_html("<br><br>", height=60)  # Spacing
         if st.button("🏠 **Home**", use_container_width=True, type="secondary"):
             st.session_state.selected_topic = None
             st.rerun()
@@ -554,6 +1809,7 @@ else:
     if posts:
         df = pd.DataFrame([
             {
+                "title": p.title,
                 "content": clean_content(p.content),
                 "url": p.url,
                 "posted_at": p.posted_at,
@@ -565,7 +1821,7 @@ else:
                 "subreddit": getattr(p, 'subreddit', None),  # Add subreddit info
             }
             for p in posts
-        ])        # Enhanced metrics section
+        ])        # Enhanced metrics section with proper Streamlit components
         col1, col2, col3, col4 = st.columns(4)
         
         # Separate regular posts from photos
@@ -573,18 +1829,33 @@ else:
         photos_df = df[df["source"] == "photos"]
         
         with col1:
-            st.metric("📊 Total Posts", len(regular_posts_df), help="Excludes photos (shown separately)")
+            st.metric(
+                label="📊 Total Posts", 
+                value=f"{len(regular_posts_df):,}", 
+                help="Excludes photos (shown separately)"
+            )
         with col2:
-            st.metric("❤️ Total Likes", f"{regular_posts_df['likes'].sum():,}")
+            total_likes = regular_posts_df['likes'].sum()
+            st.metric(
+                label="❤️ Total Likes", 
+                value=f"{total_likes:,}"
+            )
         with col3:
-            st.metric("💬 Total Comments", f"{regular_posts_df['comments'].sum():,}")
+            total_comments = regular_posts_df['comments'].sum()
+            st.metric(
+                label="💬 Total Comments", 
+                value=f"{total_comments:,}"
+            )
         with col4:
-            recent_posts = len(regular_posts_df[regular_posts_df['posted_at'] > datetime.utcnow() - timedelta(days=1)])
             photos_count = len(photos_df)
-            st.metric("� Photos Found", photos_count, help="Images found from web search")
+            st.metric(
+                label="🖼️ Photos Found", 
+                value=f"{photos_count:,}", 
+                help="Images found from web search"
+            )
         
         # Analytics section (excluding photos as they're for browsing, not trend analysis)
-        st.markdown("## 📈 **Analytics**")
+        st.markdown('<h2 class="section-heading">📈 Analytics</h2>', unsafe_allow_html=True)
         
         # Use regular posts for analytics, not photos
         analytics_df = regular_posts_df.copy()
@@ -594,7 +1865,7 @@ else:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Enhanced time series chart
+            # Enhanced time series chart with consistent Inter font
             fig = px.line(
                 daily, 
                 x="date", 
@@ -605,12 +1876,23 @@ else:
             fig.update_layout(
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(size=12)
+                font=dict(
+                    family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell, Open Sans, Helvetica Neue, sans-serif",
+                    size=12,
+                    color="#0F172A"
+                ),
+                title=dict(
+                    font=dict(
+                        family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell, Open Sans, Helvetica Neue, sans-serif",
+                        size=16,
+                        color="#0F172A"
+                    )
+                )
             )
             st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            # Source distribution (excluding photos)
+            # Source distribution with consistent fonts
             source_dist = analytics_df.groupby("source").size().reset_index(name="count")
             source_dist["icon"] = source_dist["source"].map(SOURCE_ICONS)
             source_dist["display"] = source_dist["icon"] + " " + source_dist["source"].str.title()
@@ -623,7 +1905,19 @@ else:
             )
             fig2.update_layout(
                 plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)"
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(
+                    family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell, Open Sans, Helvetica Neue, sans-serif",
+                    size=12,
+                    color="#0F172A"
+                ),
+                title=dict(
+                    font=dict(
+                        family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell, Open Sans, Helvetica Neue, sans-serif",
+                        size=16,
+                        color="#0F172A"
+                    )
+                )
             )
             st.plotly_chart(fig2, use_container_width=True)
         
@@ -647,192 +1941,13 @@ else:
 
         now = datetime.utcnow()
 
-        def render_post_gallery(row, key_prefix: str, topic=None, is_photo=False) -> None:
-            """Render a post in a consistent-height gallery card.
-            Cleans any HTML from the content so tags aren't shown while keeping
-            the underline and styling intact.
-            """
-            import html as _html
-            import re as _re
-
-            content = clean_content(row["content"])
-
-
-            # Title from first line of content (shorter for photos)
-            max_title_length = 60 if is_photo else 80
-            first_line = content.split("\n")[0]
-            title_text = (first_line[:max_title_length] + ("..." if len(first_line) > max_title_length else "")).strip()
-
-            # Escape early to prevent HTML from showing
-            escaped_title = _html.escape(title_text)
-            escaped_source = _html.escape(row["source"].title())
-            escaped_age = _html.escape(time_ago(row["posted_at"]))
-            subreddit_info = f"r/{row['subreddit']}" if row.get('subreddit') and row["source"] == "reddit" else ""
-            escaped_subreddit = (" • " + _html.escape(subreddit_info)) if subreddit_info else ""
-
-            # Underline subject name inside the escaped title (case-insensitive)
-            if topic and topic.name:
-                subj_escaped = _html.escape(topic.name)
-                try:
-                    escaped_title = _re.sub(
-                        _re.compile(_re.escape(subj_escaped), _re.IGNORECASE),
-                        f"<u>{subj_escaped}</u>",
-                        escaped_title,
-                    )
-                except Exception:
-                    # Fallback: no underline if anything goes wrong
-                    pass
-
-            # Engagement text
-            likes = row.get('likes') or 0
-            comments = row.get('comments') or 0
-            engagement_text = f"❤️ {likes}   💬 {comments}" if (likes or comments) else ""
-            escaped_engagement = _html.escape(engagement_text)
-
-            # Content preview (2nd line onwards)
-            preview = ""
-            if not is_photo:
-                remainder = content[len(first_line):].strip() if len(content) > len(first_line) else ""
-                if remainder:
-                    remainder = remainder[:140] + ("..." if len(remainder) > 140 else "")
-                    preview = _html.escape(remainder)
-
-            # Image handling
-            has_image = bool(row.get('image_url') and str(row.get('image_url', '')).startswith('http'))
-            img_url = _html.escape(str(row.get('image_url', ''))) if has_image else ""
-
-            # Visual config
-            source_icon = SOURCE_ICONS.get(row["source"], "📄")
-            border_colors = {
-                'reddit': '#ff4500',
-                'instagram': '#e4405f',
-                'facebook': '#1877f2',
-                'news': '#0066cc',
-                'photos': '#9b59b6',
-                'youtube': '#ff0000',
-            }
-            border_color = border_colors.get(row["source"], '#6c757d')
-            title_prefix = "📸 " if is_photo else ("" if row["source"] != "youtube" else "▶️ ")
-
-            # Consistent card height to align squares
-            # Slightly taller for photo cards
-            min_h = 320 if is_photo else 260
-
-            # Optional image section (kept within the card so the border wraps everything)
-            img_block = (
-                f'<div style="margin-bottom:10px; text-align:center;">'
-                f'<img src="{img_url}" alt="image" style="width:100%; max-height:{160 if is_photo else 120}px; object-fit:cover; border-radius:8px;"/>'
-                f"</div>"
-            ) if has_image else ""
-
-            # Optional engagement block
-            engagement_block = (
-                f'<div style="color:#666; font-size:0.9em;">{escaped_engagement}</div>'
-            ) if escaped_engagement else ""
-
-            # Content preview block
-            preview_block = (
-                f'<p style="margin: 8px 0 0 0; color:#555; line-height:1.4;">{preview}</p>'
-            ) if preview else ""
-
-            # Build the full card as a single HTML block, escaping all dynamic values
-            card_html = f"""
-            <div style="
-                display:flex; flex-direction:column; justify-content:space-between;
-                border:2px solid {border_color}; border-left:6px solid {border_color};
-                border-radius:12px; padding:16px; margin:12px 0; min-height:{min_h}px;
-                background:linear-gradient(135deg,#ffffff,#f8f9fa);
-                box-shadow:0 4px 10px rgba(0,0,0,0.06); font-family:'Segoe UI', sans-serif;
-            ">
-                <div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                        <div style="font-weight:600; color:#333;">{source_icon} {escaped_source}{escaped_subreddit}</div>
-                        <div style="color:#888; font-style:italic; font-size:0.9em;">{escaped_age}</div>
-                    </div>
-                    <div style="margin:8px 0 6px 0; font-weight:700; font-size:1.06em; color:#222;">
-                        {title_prefix}{escaped_title}
-                    </div>
-                    {img_block}
-                    {preview_block}
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; padding-top:10px; border-top:1px solid #eee;">
-                    {engagement_block}
-                    <a href="{_html.escape(str(row['url']))}" target="_blank" style="
-                        color:#007bff; text-decoration:underline; font-weight:500; padding:6px 10px;
-                        border:1px solid #007bff; border-radius:6px; transition:all .2s;"
-                        onmouseover="this.style.backgroundColor='#007bff'; this.style.color='white'; this.style.textDecoration='none';"
-                        onmouseout="this.style.backgroundColor='transparent'; this.style.color='#007bff'; this.style.textDecoration='underline';">
-                        🔗 View
-                    </a>
-                </div>
-            </div>
-            """
-
-            # Render the card
-            st.markdown(card_html, unsafe_allow_html=True)
-
-            # AI Summary button (outside the HTML for Python callback)
-            if st.button("🤖 AI Summary", key=key_prefix, help="Generate AI Summary", type="secondary"):
-                show_link_summary(str(row["content"]))
-
-        def render_post(row, key_prefix: str, in_columns: bool = False) -> None:
-            # Clean the content for display
-            import html as _html
-
-            content = clean_content(row["content"])[:200]
-
-            
-            age = time_ago(row["posted_at"])
-            source_icon = SOURCE_ICONS.get(row["source"], "📄")
-            
-            # Enhanced post rendering
-            is_recent = now - row["posted_at"] <= timedelta(hours=1)
-            
-            engagement = f"❤️ {row['likes']} 💬 {row['comments']}" if row['likes'] or row['comments'] else ""
-            
-            # Check if post has an image
-            has_image = row.get('image_url') and str(row.get('image_url', '')).startswith('http')
-            
-            # Use native Streamlit components instead of complex HTML
-            with st.container():
-                # Create header row
-                col_source, col_time = st.columns([4, 1])
-                with col_source:
-                    st.markdown(f"**{source_icon} {row['source'].title()}**")
-                with col_time:
-                    st.markdown(f"*{age}*")
-                
-                # Show image if available
-                if has_image:
-                    try:
-                        st.image(row['image_url'], width=200 if not in_columns else 150)
-                    except:
-                        st.caption("📷 *Image preview unavailable*")
-                
-                # Content
-                st.markdown(_html.escape(content) + "...")
-                
-                # Bottom row with engagement and actions
-                col_engagement, col_link, col_ai = st.columns([2, 1, 1])
-                with col_engagement:
-                    if engagement:
-                        st.caption(engagement)
-                with col_link:
-                    st.markdown(f"[🔗 View]({row['url']})")
-                with col_ai:
-                    if st.button(f"🤖 AI", key=key_prefix, type="secondary"):
-                        show_link_summary(str(row["content"]))
-                
-                # Add separator
-                st.markdown("---")
-
         # Posts sections with tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
             "🕒 Recent", "📰 News", "🐦 Reddit", "📷 Instagram", "📘 Facebook", "📺 YouTube", "🖼️ Photos", "🤖 AI Summary"
         ])
         
         with tab1:
-            st.markdown("### 🕒 **Recent Posts**")
+            st.markdown('<h3 class="section-heading">🕒 Recent Posts</h3>', unsafe_allow_html=True)
             # Filter out photos and YouTube from recent posts - they should only appear in their dedicated tabs
             recent_df = df[(df["source"] != "photos") & (df["source"] != "youtube")]
             if not recent_df.empty:
@@ -847,14 +1962,31 @@ else:
                     current_col = col1 if idx % 2 == 0 else col2
                     
                     with current_col:
-                        render_post_gallery(row, f"recent_gallery_{idx}", topic)
+                        # Use appropriate card renderer based on source
+                        if row["source"] == "news":
+                            render_news_card(row)
+                        elif row["source"] == "reddit":
+                            render_reddit_card(row)
+                        elif row["source"] == "facebook":
+                            render_facebook_card(row)
+                        elif row["source"] == "instagram":
+                            render_instagram_card(row)
+                        else:
+                            # Generic renderer for other sources
+                            title = _first(row.get("title", ""), row.get("content", "")[:80])
+                            summary = _first(row.get("summary", ""), row.get("content", ""))
+                            image = row.get("image_url", "")
+                            link = row.get("url", "")
+                            age = time_ago(row["posted_at"])
+                            source_name = row["source"].title()
+                            _render_card(title, summary, image, age, link, badge=source_name, topic_name=topic.name)
             else:
                 st.info("No recent posts found. Try collecting data from sources other than photos.")
         
         with tab2:
             news_df = df[df["source"] == "news"]
             if not news_df.empty:
-                st.markdown("### 📰 **Latest News Articles**")
+                st.markdown('<h3 class="section-heading">📰 Latest News Articles</h3>', unsafe_allow_html=True)
                 st.markdown(f"Found **{len(news_df)}** news articles")
                 
                 # Gallery view with two columns for easier browsing
@@ -868,7 +2000,7 @@ else:
                     current_col = col1 if idx % 2 == 0 else col2
                     
                     with current_col:
-                        render_post_gallery(row, f"news_gallery_{idx}", topic)
+                        render_news_card(row)
                 
                 # Show source breakdown
                 st.markdown("---")
@@ -894,7 +2026,7 @@ else:
         with tab3:
             reddit_df = df[df["source"] == "reddit"]
             if not reddit_df.empty:
-                st.markdown("### 👽 **Reddit Posts**")
+                st.markdown('<h3 class="section-heading">👽 Reddit Posts</h3>', unsafe_allow_html=True)
                 
                 # Gallery view with two columns
                 reddit_items = reddit_df.sort_values("posted_at", ascending=False).head(10)
@@ -907,14 +2039,14 @@ else:
                     current_col = col1 if idx % 2 == 0 else col2
                     
                     with current_col:
-                        render_post_gallery(row, f"reddit_gallery_{idx}", topic)
+                        render_reddit_card(row)
             else:
                 st.info("No Reddit posts found for this topic.")
         
         with tab4:
             instagram_df = df[df["source"] == "instagram"]
             if not instagram_df.empty:
-                st.markdown("### 📷 **Instagram Posts**")
+                st.markdown('<h3 class="section-heading">📷 Instagram Posts</h3>', unsafe_allow_html=True)
                 
                 # Gallery view with two columns
                 instagram_items = instagram_df.sort_values("posted_at", ascending=False).head(10)
@@ -927,14 +2059,14 @@ else:
                     current_col = col1 if idx % 2 == 0 else col2
                     
                     with current_col:
-                        render_post_gallery(row, f"instagram_gallery_{idx}", topic)
+                        render_instagram_card(row)
             else:
                 st.info("No Instagram posts found for this topic.")
         
         with tab5:
             facebook_df = df[df["source"] == "facebook"]
             if not facebook_df.empty:
-                st.markdown("### 📘 **Facebook Posts**")
+                st.markdown('<h3 class="section-heading">📘 Facebook Posts</h3>', unsafe_allow_html=True)
                 
                 # Gallery view with two columns
                 facebook_items = facebook_df.sort_values("posted_at", ascending=False).head(10)
@@ -947,14 +2079,14 @@ else:
                     current_col = col1 if idx % 2 == 0 else col2
                     
                     with current_col:
-                        render_post_gallery(row, f"facebook_gallery_{idx}", topic)
+                        render_facebook_card(row)
             else:
                 st.info("No Facebook posts found for this topic.")
         
         with tab6:
             youtube_df = df[df["source"] == "youtube"]
             if not youtube_df.empty:
-                st.markdown("### 📺 **YouTube Videos**")
+                st.markdown('<h3 class="section-heading">📺 YouTube Videos</h3>', unsafe_allow_html=True)
                 
                 # Gallery view with two columns
                 youtube_items = youtube_df.sort_values("posted_at", ascending=False).head(15)
@@ -967,7 +2099,7 @@ else:
                     current_col = col1 if idx % 2 == 0 else col2
                     
                     with current_col:
-                        render_post_gallery(row, f"youtube_gallery_{idx}", topic)
+                        render_youtube_card(row)
             else:
                 st.info("No YouTube videos found for this topic.")
         
@@ -977,7 +2109,7 @@ else:
             instagram_photos_df = df[(df["source"] == "instagram") & (df["is_photo"] == True)]
             
             if not photos_df.empty or not instagram_photos_df.empty:
-                st.markdown("### 🖼️ **Recent Photos**")
+                st.markdown('<h3 class="section-heading">🖼️ Recent Photos</h3>', unsafe_allow_html=True)
                 
                 # Combine all photo content
                 all_photos = pd.concat([photos_df, instagram_photos_df]) if not photos_df.empty and not instagram_photos_df.empty else (photos_df if not photos_df.empty else instagram_photos_df)
@@ -993,11 +2125,12 @@ else:
                         current_col = col1 if idx % 2 == 0 else col2
                         
                         with current_col:
-                            render_post_gallery(row, f"photo_gallery_{idx}", topic, is_photo=True)
+                            # Use Instagram renderer for photos since they're mostly from Instagram
+                            render_instagram_card(row)
                 else:
                     st.info("No photos found yet. Try collecting data or add Instagram profiles to get photo content.")
             else:
-                st.markdown("""
+                st_html(dedent("""
                 <div style="text-align: center; padding: 2rem; background: #ffe6e6; border-radius: 15px; border: 2px solid #ff4444;">
                     <h4>� No Photos Found</h4>
                     <p><strong>To get actual photos of your subjects (Johnny Gosch, Amt Bradley), you need API keys:</strong></p>
@@ -1014,31 +2147,111 @@ else:
                     
                     <p>With API keys, you'll get actual photos of the people you're monitoring instead of random images.</p>
                 </div>
-                """, unsafe_allow_html=True)
+                """), height=350)
         
         with tab8:
-            st.markdown("### 🤖 **AI-Generated Summary**")
+            st.markdown('<h3 class="section-heading">🤖 AI-Generated Summary</h3>', unsafe_allow_html=True)
             with st.spinner("Generating AI summary..."):
                 try:
                     # Use regular posts for AI summary, not photos
                     summary_content = analytics_df["content"].head(20).tolist()
-                    summary = summarize(summary_content)
-                    st.markdown(f"""
-                    <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 10px; 
-                               border-left: 4px solid {topic.color};">
-                        {strip_think(summary)}
+                    summary_text = strip_think(summarize(summary_content)).strip()
+
+                    # Convert lines and inline " - " (and similar) bullets to HTML list items, preserving spacing
+                    def _to_bulleted_html(text: str) -> tuple[str, int]:
+                        # First, split text at " - " to handle inline bullets, but preserve real line breaks
+                        split_text = []
+                        for line in (text or "").splitlines():
+                            # Split the line at " - " but keep empty strings to preserve positioning
+                            parts = [p for p in line.split(" - ")]
+                            # Add the first part
+                            if parts[0].strip():
+                                split_text.append(parts[0].strip())
+                            # Add remaining parts with bullet points
+                            for part in parts[1:]:
+                                if part.strip():
+                                    split_text.append("- " + part.strip())
+
+                        lines = split_text
+                        parts: list[str] = []
+                        in_list = False
+                        non_empty_line_count = 0
+
+                        # Matches bullets at line start: -, *, •
+                        start_bullet_re = re.compile(r'^\s*[-\*\u2022]\s+')
+
+                        def close_list():
+                            nonlocal in_list
+                            if in_list:
+                                parts.append("</ul>")
+                                in_list = False
+
+                        for raw in lines:
+                            line = raw.rstrip("\r").strip()
+                            if not line:
+                                close_list()
+                                parts.append('<div style="height: 0.5rem;"></div>')
+                                continue
+
+                            # Case 1: bullet at the beginning of the line
+                            if start_bullet_re.match(line):
+                                if not in_list:
+                                    parts.append('<ul style="margin: 0.75rem 0; padding-left: 1.5rem; list-style-position: outside;">')
+                                    in_list = True
+                                item = start_bullet_re.sub('', line).strip()
+                                if item:
+                                    parts.append(f'<li style="margin-bottom: 0.5rem;">{py_html.escape(item)}</li>')
+                                    non_empty_line_count += 1
+                                continue
+
+                            # All non-bullet text becomes a paragraph
+                            if not start_bullet_re.match(line):
+                                close_list()
+                                parts.append(f'<p style="margin: 0 0 0.5rem 0;">{py_html.escape(line)}</p>')
+                                non_empty_line_count += 1
+                                continue
+
+                            # Default: regular paragraph
+                            close_list()
+                            parts.append(f'<p style="margin: 0 0 0.5rem 0;">{py_html.escape(line)}</p>')
+                            non_empty_line_count += 1
+
+                        close_list()
+                        html = "".join(parts) if parts else f"<p>{py_html.escape(text)}</p>"
+                        return html, non_empty_line_count
+
+                    summary_html_body, line_count = _to_bulleted_html(summary_text)
+
+                    # Adjust height to avoid clipping when there are many lines/items
+                    # Increased base height and per-line height to prevent truncation
+                    computed_height = min(1200, max(300, 180 + line_count * 30))
+
+                    st_html(dedent(f"""
+                    <div style="
+                        background: #f8f9fa; 
+                        padding: 1.5rem; 
+                        border-radius: 10px; 
+                        border-left: 4px solid {topic.color};
+                        font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                        color: #1C1C1E;
+                        line-height: 1.8;
+                        font-size: 18px;
+                    ">
+                        <div style="font-family: inherit; color: inherit;">
+                            {summary_html_body}
+                        </div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    """), height=computed_height)
                 except Exception as e:
                     st.error(f"Failed to generate summary: {e}")
                     
     else:
-        st.markdown("""
+        st_html(dedent("""
         <div style="text-align: center; padding: 3rem; background: #f8f9fa; border-radius: 15px;">
             <h3>📭 No posts collected yet</h3>
             <p>Click "Collect All Topics Now" in the sidebar to start gathering data.</p>
         </div>
-        """, unsafe_allow_html=True)
+        """), height=200)
     
     # Update last viewed
     topic.last_viewed = datetime.utcnow()

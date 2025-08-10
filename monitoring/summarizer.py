@@ -64,7 +64,9 @@ def _try_ollama_summary(text: str) -> Optional[str]:
         prompt = (
             "Summarize the following social media and news content in 2-3 sentences. "
             "Focus on the main topics, key events, and overall sentiment. "
-            "Be concise and informative:\n\n" + text[:2000]  # Limit input size
+            "Use bullet points for clarity and bold important phrases."
+            "Order your response with the most important points first."
+            "Be concise (medium length) and informative:\n\n" + text[:2000]  # Limit input size
         )
         
         # Generate summary with qwen3:4b specific parameters

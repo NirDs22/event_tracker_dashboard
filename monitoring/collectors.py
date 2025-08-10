@@ -47,6 +47,7 @@ def fetch_reddit(topic: Topic) -> Tuple[List[dict], List[str]]:
                 posts.append(
                     {
                         'source': 'reddit',
+                        'title': submission.title,
                         'content': submission.selftext or submission.title,
                         'url': submission.url,
                         'posted_at': datetime.fromtimestamp(
@@ -92,6 +93,7 @@ def fetch_news(topic: Topic) -> Tuple[List[dict], List[str]]:
                 posts.append(
                     {
                         'source': 'news',
+                        'title': art['title'],
                         'content': content,
                         'url': art['url'],
                         'posted_at': datetime.fromisoformat(
@@ -135,9 +137,18 @@ def fetch_news(topic: Topic) -> Tuple[List[dict], List[str]]:
                     content = entry.get('title', '')
                     summary = entry.get('summary', '')
                     if summary and summary != content:
-                        # Clean HTML tags from summary
-                        import re
-                        summary_clean = re.sub('<[^<]+?>', '', summary)
+                        # Clean HTML tags from summary using more robust method
+                        try:
+                            from bs4 import BeautifulSoup
+                            soup = BeautifulSoup(summary, 'html.parser')
+                            summary_clean = soup.get_text(' ', strip=True)
+                        except ImportError:
+                            # Fallback: use regex
+                            import re
+                            summary_clean = re.sub(r'<[^>]+>', '', summary)
+                            # Clean up common HTML entities
+                            summary_clean = summary_clean.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+                            summary_clean = re.sub(r'\s+', ' ', summary_clean).strip()
                         content += '\n\n' + summary_clean
                     
                     # Try to get image from content
@@ -152,6 +163,7 @@ def fetch_news(topic: Topic) -> Tuple[List[dict], List[str]]:
                     
                     source_posts.append({
                         'source': 'news',
+                        'title': entry.get('title', 'No title'),
                         'content': content,
                         'url': entry.get('link', ''),
                         'posted_at': posted_dt,
@@ -204,7 +216,8 @@ def fetch_news(topic: Topic) -> Tuple[List[dict], List[str]]:
                                 
                                 posts.append({
                                     'source': 'news',
-                                    'content': title_elem.strip(),
+                                    'title': title_elem.strip(),
+                                    'content': content,
                                     'url': href if href.startswith('http') else f"https:{href}",
                                     'posted_at': datetime.utcnow(),
                                     'likes': 0,
@@ -383,6 +396,7 @@ def fetch_instagram(topic: Topic) -> Tuple[List[dict], List[str]]:
                                 
                                 posts.append({
                                     'source': 'instagram',
+                                    'title': 'Instagram Content',
                                     'content': f"📷 {link_text[:200]}...",
                                     'url': clean_url,
                                     'posted_at': datetime.utcnow() - timedelta(hours=random.randint(1, 168)),  # Random time in last week
@@ -404,8 +418,9 @@ def fetch_instagram(topic: Topic) -> Tuple[List[dict], List[str]]:
                                         if username not in ['explore', 'accounts', 'p', 'reel', 'tv', 'stories']:
                                             posts.append({
                                                 'source': 'instagram',
-                                                'content': f"📱 @{username} Instagram profile - posts about {query}",
-                                                'url': f"https://instagram.com/{username}/",
+                                                'title': f"📱 Instagram profile",
+                                                'content': f"📱 @{username}",
+                                                'url': instagram_url,
                                                 'posted_at': datetime.utcnow() - timedelta(hours=random.randint(1, 48)),
                                                 'likes': random.randint(50, 5000),
                                                 'comments': random.randint(5, 100),
@@ -448,7 +463,8 @@ def fetch_instagram(topic: Topic) -> Tuple[List[dict], List[str]]:
             for username in likely_usernames[:5]:
                 posts.append({
                     'source': 'instagram',
-                    'content': f"📱 Potential Instagram profile: @{username} (related to {query})",
+                    'title': f"📱 Potential Instagram profile",
+                    'content': f"📱 @{username}",
                     'url': f"https://instagram.com/{username}/",
                     'posted_at': datetime.utcnow() - timedelta(hours=random.randint(1, 72)),
                     'likes': random.randint(10, 1000),
@@ -571,7 +587,7 @@ def fetch_photos(topic: Topic) -> Tuple[List[dict], List[str]]:
                             
                         posts.append({
                             'source': 'photos',
-                            'content': f"📷 {title}",
+                            'title': f"📷 {title}",
                             'url': source_url,  # Link to the source website (or image if no source found)
                             'posted_at': datetime.utcnow(),
                             'likes': 0,
@@ -634,7 +650,7 @@ def fetch_photos(topic: Topic) -> Tuple[List[dict], List[str]]:
                                 
                                 posts.append({
                                     'source': 'photos',
-                                    'content': f"📷 {title}",
+                                    'title': f"📷 {title}",
                                     'url': source_url,  # Link to source website
                                     'posted_at': datetime.utcnow(),
                                     'likes': 0,
@@ -824,6 +840,7 @@ def fetch_facebook(topic: Topic) -> Tuple[List[dict], List[str]]:
                 
                 facebook_posts.append({
                     'source': 'facebook',
+                    'title': f"📘 Facebook Post",
                     'content': f"📘 {content}",
                     'url': clean_url,
                     'posted_at': datetime.utcnow() - timedelta(hours=random.randint(1, 168)),  # Within last week
@@ -1052,7 +1069,8 @@ def fetch_youtube(topic: Topic) -> Tuple[List[dict], List[str]]:
                                         # Create post data
                                         video_data.append({
                                             'source': 'youtube',
-                                            'content': f"{title}\n\nChannel: {channel_name}\nViews: {view_text}\nPublished: {published_text}\n\n{description}",
+                                            'title': f"{title} \n(by {channel_name})",
+                                            'content': f"<p>{description}</p>",
                                             'url': video_url,
                                             'posted_at': datetime.utcnow() - timedelta(days=1),  # Approximate since we don't have exact date
                                             'likes': 0,  # YouTube likes not available without API
@@ -1082,7 +1100,8 @@ def fetch_youtube(topic: Topic) -> Tuple[List[dict], List[str]]:
                     
                     posts.append({
                         'source': 'youtube',
-                        'content': f"YouTube Video: {title}",
+                        'title': f"{title}",
+                        'content': f"",
                         'url': video_url,
                         'posted_at': datetime.utcnow() - timedelta(days=1),
                         'likes': 0,
@@ -1179,6 +1198,7 @@ def collect_all_topics_efficiently(topics: List[Topic], progress: Callable[[str]
                     post_dict = {
                         'topic_id': post_data.get('topic_id'),
                         'source': post_data.get('source', ''),
+                        'title': post_data.get('title', ''),
                         'content': post_data.get('content', ''),
                         'url': post_data.get('url', ''),
                         'posted_at': post_data.get('posted_at', datetime.utcnow()),
@@ -1257,6 +1277,7 @@ def collect_topic(
                 post_data = {
                     'topic_id': db_topic.id,
                     'source': item.get('source', ''),
+                    'title': item.get('title', ''),
                     'content': item.get('content', ''),
                     'url': item.get('url', ''),
                     'posted_at': item.get('posted_at', datetime.utcnow()),
