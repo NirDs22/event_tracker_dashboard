@@ -23,7 +23,7 @@ except Exception:
     ENV_LOADED = False
 
 from monitoring.database import init_db, SessionLocal, Topic, Post
-from monitoring.collectors import collect_topic, collect_all_topics_efficiently
+from monitoring.collectors import collect_topic, collect_all_topics_efficiently, fetch_twitter_nitter
 from monitoring.scheduler import start_scheduler, send_test_digest
 from monitoring.summarizer import summarize, strip_think
 
@@ -1973,8 +1973,8 @@ else:
         now = datetime.utcnow()
 
         # Posts sections with tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-            "🕒 Recent", "📰 News", "🐦 Reddit", "📷 Instagram", "📘 Facebook", "📺 YouTube", "🖼️ Photos", "🤖 AI Summary"
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+            "🕒 Recent", "📰 News", "🐦 Reddit", "📷 Instagram", "📘 Facebook", "📺 YouTube", "🖼️ Photos", "🐦 Tweets", "🤖 AI Summary"
         ])
         
         with tab1:
@@ -2138,25 +2138,15 @@ else:
             # Photos tab - show all photo content and dedicated photo searches
             photos_df = df[df["source"] == "photos"]
             instagram_photos_df = df[(df["source"] == "instagram") & (df["is_photo"] == True)]
-            
             if not photos_df.empty or not instagram_photos_df.empty:
                 st.markdown('<h3 class="section-heading">🖼️ Recent Photos</h3>', unsafe_allow_html=True)
-                
-                # Combine all photo content
                 all_photos = pd.concat([photos_df, instagram_photos_df]) if not photos_df.empty and not instagram_photos_df.empty else (photos_df if not photos_df.empty else instagram_photos_df)
-                
                 if not all_photos.empty:
                     st.markdown(f"**Found {len(all_photos)} photos**")
-                    
-                    # Gallery view with two columns
                     col1, col2 = st.columns(2)
-                    
                     for idx, (_, row) in enumerate(all_photos.sort_values("posted_at", ascending=False).head(12).iterrows()):
-                        # Alternate between columns
                         current_col = col1 if idx % 2 == 0 else col2
-                        
                         with current_col:
-                            # Use Instagram renderer for photos since they're mostly from Instagram
                             render_instagram_card(row)
                 else:
                     st.info("No photos found yet. Try collecting data or add Instagram profiles to get photo content.")
@@ -2165,7 +2155,6 @@ else:
                 <div style="text-align: center; padding: 2rem; background: #ffe6e6; border-radius: 15px; border: 2px solid #ff4444;">
                     <h4>� No Photos Found</h4>
                     <p><strong>To get actual photos of your subjects (Johnny Gosch, Amt Bradley), you need API keys:</strong></p>
-                    
                     <div style="background: white; padding: 1rem; border-radius: 8px; margin: 1rem 0; text-align: left;">
                         <h5>🎯 Quick Setup (Free):</h5>
                         <ol>
@@ -2175,12 +2164,61 @@ else:
                         </ol>
                         <p><em>Alternative:</em> <a href="https://pexels.com/api" target="_blank">Pexels API</a> with <code>PEXELS_API_KEY</code></p>
                     </div>
-                    
                     <p>With API keys, you'll get actual photos of the people you're monitoring instead of random images.</p>
                 </div>
                 """), height=350)
-        
+
+        # Tweets tab
         with tab8:
+            st.markdown('<h3 class="section-heading">🐦 Tweets (via Nitter)</h3>', unsafe_allow_html=True)
+            tweets_df = df[df["source"] == "twitter"]
+            if not tweets_df.empty:
+                for _, tweet in tweets_df.iterrows():
+                    st.markdown(f"""
+                        <div style='background:rgba(255,255,255,0.7);border-radius:12px;padding:1rem;margin-bottom:1rem;box-shadow:0 2px 8px #0001;'>
+                            <div style='font-size:1.1rem;line-height:1.5;'>{py_html.escape(tweet['content'])}</div>
+                            <div style='margin-top:0.5rem;font-size:0.9rem;color:#888;'>
+                                <a href='{tweet['url']}' target='_blank'>View on Nitter</a> · {tweet['likes']} Likes · {tweet['comments']} Replies
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("No tweets found for this topic.")
+
+        with tab9:
+            st.markdown('<h3 class="section-heading">🤖 AI-Generated Summary</h3>', unsafe_allow_html=True)
+            with st.spinner("Generating AI summary..."):
+                try:
+                    # Use regular posts for AI summary, not photos
+                    summary_content = analytics_df["content"].head(20).tolist()
+                    summary_text = strip_think(summarize(summary_content)).strip()
+
+                    # Convert lines and inline " - " (and similar) bullets to HTML list items, preserving spacing
+                    def _to_bulleted_html(text: str) -> tuple[str, int]:
+                        # First, split text at " - " to handle inline bullets, but preserve real line breaks
+                        split_text = []
+                        for line in (text or "").splitlines():
+                            # Split the line at " - " but keep empty strings to preserve positioning
+                            parts = [p for p in line.split(" - ")]
+                            # Add the first part
+                            if parts[0].strip():
+                                split_text.append(parts[0].strip())
+                            # Add remaining parts with bullet points
+                            for part in parts[1:]:
+                                if part.strip():
+                                    split_text.append("- " + part.strip())
+
+                        lines = split_text
+                        parts: list[str] = []
+                        in_list = False
+                        non_empty_line_count = 0
+
+                        # Matches bullets at line start: -, *, •
+                    # ...existing code...
+                except Exception as e:
+                    st.error(f"AI summary failed: {e}")
+        
+        with tab9:
             st.markdown('<h3 class="section-heading">🤖 AI-Generated Summary</h3>', unsafe_allow_html=True)
             with st.spinner("Generating AI summary..."):
                 try:

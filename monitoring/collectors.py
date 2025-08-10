@@ -1,3 +1,123 @@
+
+"""Data collection utilities for social networks and news APIs."""
+from datetime import datetime, timedelta
+import os
+from typing import Callable, List, Tuple
+from .database import SessionLocal, Topic, Post
+
+
+
+def fetch_twitter_nitter(topic: Topic) -> Tuple[List[dict], List[str]]:
+    """Collect Twitter/X posts using a list of Nitter instances with fallback logic, RSS, randomized rotation, backoff, and snscrape fallback."""
+    import random, time
+    posts: List[dict] = []
+    errors: List[str] = []
+    try:
+        import requests
+        import feedparser
+        import urllib.parse
+    except ImportError:
+        errors.append("fetch_twitter_nitter requires 'requests' and 'feedparser'. Install with: pip install requests feedparser")
+        return posts, errors
+
+    # Nitter instance cache (in-memory, per-process)
+    if not hasattr(fetch_twitter_nitter, "_last_success"): fetch_twitter_nitter._last_success = None
+
+    nitter_env = os.getenv('NITTER_INSTANCES')
+    if nitter_env:
+        nitter_instances = [url.strip().rstrip('/') for url in nitter_env.split(',') if url.strip()]
+    else:
+        nitter_instances = [
+            'https://nitter.net',
+            'https://nitter.privacydev.net',
+            'https://nitter.moomoo.me',
+            'https://nitter.1d4.us',
+            'https://nitter.pussthecat.org',
+        ]
+
+    # Randomize order, but try last successful first
+    instances = nitter_instances[:]
+    random.shuffle(instances)
+    if fetch_twitter_nitter._last_success and fetch_twitter_nitter._last_success in instances:
+        instances.remove(fetch_twitter_nitter._last_success)
+        instances = [fetch_twitter_nitter._last_success] + instances
+
+    query = topic.name
+    if getattr(topic, 'keywords', None):
+        query += ' ' + ' '.join([k.strip() for k in topic.keywords.split(',') if k.strip()])
+
+    # Try each Nitter instance with exponential backoff and jitter
+    for idx, nitter_url in enumerate(instances):
+        try:
+            search_url = f"{nitter_url}/search/rss?f=tweets&q={urllib.parse.quote(query)}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8',
+            }
+            timeout = random.randint(30, 45)
+            resp = requests.get(search_url, headers=headers, timeout=timeout)
+            if resp.status_code != 200:
+                errors.append(f"Nitter instance {nitter_url} returned status {resp.status_code}")
+                # Exponential backoff with jitter
+                time.sleep(min(2 ** idx + random.uniform(0, 2), 10))
+                continue
+            feed = feedparser.parse(resp.content)
+            if not feed.entries:
+                errors.append(f"No tweets found on {nitter_url} for '{query}'")
+                time.sleep(min(2 ** idx + random.uniform(0, 2), 10))
+                continue
+            for entry in feed.entries[:15]:
+                # Normalize output
+                post_id = entry.get('id') or entry.get('link', '').split('/')[-1]
+                author = entry.get('author', '')
+                text = entry.get('title', '')
+                created_at = entry.get('published_parsed')
+                if created_at:
+                    created_at = datetime(*created_at[:6])
+                else:
+                    created_at = datetime.utcnow()
+                url = entry.get('link', '')
+                posts.append({
+                    'source': 'twitter',
+                    'post_id': post_id,
+                    'author': author,
+                    'text': text,
+                    'created_at': created_at,
+                    'url': url,
+                })
+            if posts:
+                fetch_twitter_nitter._last_success = nitter_url
+                return posts, errors
+        except Exception as exc:
+            errors.append(f"Nitter instance {nitter_url} failed: {exc}")
+            time.sleep(min(2 ** idx + random.uniform(0, 2), 10))
+            continue
+
+    # Fallback: snscrape
+    try:
+        import snscrape.modules.twitter as sntwitter
+        scraped = []
+        for i, tweet in enumerate(sntwitter.TwitterSearchScraper(query).get_items()):
+            if i >= 15:
+                break
+            scraped.append({
+                'source': 'twitter',
+                'post_id': str(tweet.id),
+                'author': tweet.user.username,
+                'text': tweet.content,
+                'created_at': tweet.date,
+                'url': f'https://twitter.com/{tweet.user.username}/status/{tweet.id}',
+            })
+        if scraped:
+            return scraped, errors
+        else:
+            errors.append(f"snscrape fallback found no tweets for '{query}'")
+    except Exception as exc:
+        errors.append(f"snscrape fallback failed: {exc}")
+
+    if not posts:
+        errors.append(f"All Nitter instances and snscrape failed or no tweets found for '{query}'.")
+    return posts, errors
 """Data collection utilities for social networks and news APIs."""
 from datetime import datetime, timedelta
 import os
