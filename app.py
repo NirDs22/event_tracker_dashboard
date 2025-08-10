@@ -2184,39 +2184,6 @@ else:
                     """, unsafe_allow_html=True)
             else:
                 st.info("No tweets found for this topic.")
-
-        with tab9:
-            st.markdown('<h3 class="section-heading">🤖 AI-Generated Summary</h3>', unsafe_allow_html=True)
-            with st.spinner("Generating AI summary..."):
-                try:
-                    # Use regular posts for AI summary, not photos
-                    summary_content = analytics_df["content"].head(20).tolist()
-                    summary_text = strip_think(summarize(summary_content)).strip()
-
-                    # Convert lines and inline " - " (and similar) bullets to HTML list items, preserving spacing
-                    def _to_bulleted_html(text: str) -> tuple[str, int]:
-                        # First, split text at " - " to handle inline bullets, but preserve real line breaks
-                        split_text = []
-                        for line in (text or "").splitlines():
-                            # Split the line at " - " but keep empty strings to preserve positioning
-                            parts = [p for p in line.split(" - ")]
-                            # Add the first part
-                            if parts[0].strip():
-                                split_text.append(parts[0].strip())
-                            # Add remaining parts with bullet points
-                            for part in parts[1:]:
-                                if part.strip():
-                                    split_text.append("- " + part.strip())
-
-                        lines = split_text
-                        parts: list[str] = []
-                        in_list = False
-                        non_empty_line_count = 0
-
-                        # Matches bullets at line start: -, *, •
-                    # ...existing code...
-                except Exception as e:
-                    st.error(f"AI summary failed: {e}")
         
         with tab9:
             st.markdown('<h3 class="section-heading">🤖 AI-Generated Summary</h3>', unsafe_allow_html=True)
