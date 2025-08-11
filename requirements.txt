@@ -33,4 +33,3 @@ openai==1.10.0
 
 # Configuration
 python-dotenv==1.0.0
-```
