@@ -2273,7 +2273,7 @@ else:
 
                     # Adjust height to avoid clipping when there are many lines/items
                     # Increased base height and per-line height to prevent truncation
-                    computed_height = min(1200, max(300, 180 + line_count * 30))
+                    computed_height =  180 + line_count * 30
 
                     st_html(dedent(f"""
                     <div style="
