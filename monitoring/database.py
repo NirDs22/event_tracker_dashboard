@@ -3,7 +3,9 @@ from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
-DB_PATH = os.getenv('TRACKER_DB', 'tracker.db')
+from monitoring.secrets import get_secret
+
+DB_PATH = get_secret('TRACKER_DB', 'tracker.db')
 engine = create_engine(f'sqlite:///{DB_PATH}', connect_args={'check_same_thread': False})
 SessionLocal = sessionmaker(bind=engine)
 

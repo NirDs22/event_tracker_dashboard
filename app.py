@@ -4,7 +4,15 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from textwrap import dedent
 
+# Configure Streamlit page FIRST, before any other st commands
 import streamlit as st
+st.set_page_config(
+    page_title="Social & News Monitor", 
+    layout="wide",
+    page_icon="📰",
+    initial_sidebar_state="expanded"
+)
+
 from streamlit.components.v1 import html as st_html
 import html as py_html
 import pandas as pd
@@ -16,11 +24,18 @@ try:
 except Exception:
     BeautifulSoup = None
 
+# Load environment variables from .env file if available (for local development)
 try:
     from dotenv import load_dotenv
-    ENV_LOADED = load_dotenv(dotenv_path='/Users/nird/Documents/ENV/.env')
+    ENV_LOADED = load_dotenv(dotenv_path='.env')
+    if not ENV_LOADED:
+        # Try loading from absolute path as fallback
+        ENV_LOADED = load_dotenv(dotenv_path='/Users/nird/Documents/ENV/.env')
 except Exception:
     ENV_LOADED = False
+
+# Import the secret management utility
+from monitoring.secrets import get_secret
 
 from monitoring.database import init_db, SessionLocal, Topic, Post
 from monitoring.collectors import collect_topic, collect_all_topics_efficiently, fetch_twitter_nitter
@@ -767,12 +782,7 @@ try:
 except Exception:
     scheduler = None
 
-st.set_page_config(
-    page_title="Social & News Monitor", 
-    layout="wide",
-    page_icon="📰",
-    initial_sidebar_state="expanded"
-)
+# st.set_page_config moved to the top of the file
 
 # Directly inject font links in the head section to ensure proper loading
 st.components.v1.html("""
@@ -1267,14 +1277,14 @@ if not ENV_LOADED:
         "Copy .env.example to .env to add your own keys."
     )
 
-if not os.getenv("REDDIT_CLIENT_ID") or not os.getenv("REDDIT_CLIENT_SECRET"):
+if not get_secret("REDDIT_CLIENT_ID") or not get_secret("REDDIT_CLIENT_SECRET"):
     st.sidebar.warning(
         "Reddit credentials missing. Reddit posts won't be collected. "
         "Create a Reddit app and set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env."
     )
 
 
-if not os.getenv("NEWSAPI_KEY"):
+if not get_secret("NEWSAPI_KEY"):
     st.sidebar.warning(
         "NEWSAPI_KEY not set: using Google News RSS. "
         "Get a free key at newsapi.org and add NEWSAPI_KEY to .env to unlock more sources."
@@ -1296,13 +1306,13 @@ except Exception:
         "Photo searching requires `requests` and `beautifulsoup4`. Install with `pip install requests beautifulsoup4` to enable."
     )
 
-if not os.getenv("UNSPLASH_ACCESS_KEY") and not os.getenv("PEXELS_API_KEY"):
+if not get_secret("UNSPLASH_ACCESS_KEY") and not get_secret("PEXELS_API_KEY"):
     st.sidebar.error(
         "🚨 **No Photo Search Configured**\n\n"
         "To get actual photos of your subjects:\n\n"
         "1. **Unsplash** (recommended): Get free key at unsplash.com/developers\n"
         "2. **Pexels**: Get free key at pexels.com/api\n\n"
-        "Add to .env file:\n"
+        "Add to .env file or Streamlit Cloud secrets:\n"
         "```\n"
         "UNSPLASH_ACCESS_KEY=your_key\n"
         "PEXELS_API_KEY=your_key\n"
@@ -1313,7 +1323,7 @@ if not os.getenv("UNSPLASH_ACCESS_KEY") and not os.getenv("PEXELS_API_KEY"):
 # Facebook scraping now works via web search - no packages needed
 
 
-if not os.getenv("OLLAMA_MODEL"):
+if not get_secret("OLLAMA_MODEL"):
     st.sidebar.info(
         "No OLLAMA_MODEL configured; using local transformers summariser. "
         "Install Ollama and run `ollama pull qwen:latest`, then set OLLAMA_MODEL=qwen in .env for higher quality summaries."
@@ -1499,8 +1509,8 @@ with st.sidebar.expander("➕ **Add New Topic**", expanded=True):
 
 st.sidebar.markdown("---")
 
-# Add email testing section if SMTP is configured
-if os.getenv("SMTP_HOST") or os.getenv("SMTP_SERVER"):
+# Add email testing section if email is configured
+if get_secret("SMTP_HOST") or get_secret("SMTP_SERVER") or get_secret("BREVO_API"):
     with st.sidebar.expander("📧 **Test Email Digest**"):
         # Track test email sending status in session state
         if "test_email_sending" not in st.session_state:

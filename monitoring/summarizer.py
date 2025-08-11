@@ -49,8 +49,9 @@ def summarize(texts: List[str]) -> str:
 
 def _try_ollama_summary(text: str) -> Optional[str]:
     """Attempt to summarize using Ollama local AI model."""
-    model = os.getenv("OLLAMA_MODEL")
-    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    from .secrets import get_secret
+    model = get_secret("OLLAMA_MODEL")
+    ollama_host = get_secret("OLLAMA_HOST", "http://localhost:11434")
     
     if not model:
         return None

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import os
 from typing import Callable, List, Tuple
 from .database import SessionLocal, Topic, Post
+from .secrets import get_secret
 
 
 
@@ -23,7 +24,7 @@ def fetch_twitter_nitter(topic: Topic) -> Tuple[List[dict], List[str]]:
     # Nitter instance cache (in-memory, per-process)
     if not hasattr(fetch_twitter_nitter, "_last_success"): fetch_twitter_nitter._last_success = None
 
-    nitter_env = os.getenv('NITTER_INSTANCES')
+    nitter_env = get_secret('NITTER_INSTANCES')
     if nitter_env:
         nitter_instances = [url.strip().rstrip('/') for url in nitter_env.split(',') if url.strip()]
     else:
@@ -139,9 +140,9 @@ def fetch_reddit(topic: Topic) -> Tuple[List[dict], List[str]]:
         )
         return posts, errors
 
-    client_id = os.getenv('REDDIT_CLIENT_ID')
-    client_secret = os.getenv('REDDIT_CLIENT_SECRET')
-    user_agent = os.getenv('REDDIT_USER_AGENT', 'tracker')
+    client_id = get_secret('REDDIT_CLIENT_ID')
+    client_secret = get_secret('REDDIT_CLIENT_SECRET')
+    user_agent = get_secret('REDDIT_USER_AGENT', 'tracker')
     if not (client_id and client_secret):
         errors.append(
             "Missing Reddit credentials. Set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in your .env file."
@@ -196,7 +197,7 @@ def fetch_news(topic: Topic) -> Tuple[List[dict], List[str]]:
         query += ' ' + ' OR '.join([k.strip() for k in topic.keywords.split(',') if k.strip()])
 
     # Try NewsAPI first if available
-    api_key = os.getenv('NEWSAPI_KEY')
+    api_key = get_secret('NEWSAPI_KEY')
     if api_key:
         try:
             from newsapi import NewsApiClient

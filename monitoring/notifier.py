@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
+from monitoring.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,9 @@ def send_email(to_email: str, subject: str, body: str, body_type: str = 'html') 
     Returns:
         True if email sent successfully, False only for real errors
     """
-    api_key = os.getenv('BREVO_API')
-    from_email = os.getenv('BREVO_FROM') or 'noreply@yourdomain.com'
-    from_name = os.getenv('BREVO_FROM_NAME') or 'Dashboard'
+    api_key = get_secret('BREVO_API')
+    from_email = get_secret('BREVO_FROM') or 'noreply@yourdomain.com'
+    from_name = get_secret('BREVO_FROM_NAME') or 'Dashboard'
     if not api_key or not to_email:
         logger.error('Missing BREVO_API key or recipient email')
         print('[DEBUG] Missing BREVO_API key or recipient email')
