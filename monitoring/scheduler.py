@@ -146,21 +146,17 @@ def start_scheduler():
     """Start the background scheduler for daily data collection and notifications."""
     try:
         scheduler = BackgroundScheduler()
-        
-        # Run daily at 8 AM
+        # Run every hour, on the hour
         scheduler.add_job(
-            run_cycle, 
-            'cron', 
-            hour=8, 
+            run_cycle,
+            'cron',
             minute=0,
-            id='daily_collection',
+            id='hourly_collection',
             replace_existing=True
         )
-        
         scheduler.start()
-        logger.info("Scheduler started successfully - daily digests will run at 8:00 AM")
+        logger.info("Scheduler started successfully - collectors will run every hour on the hour.")
         return scheduler
-        
     except Exception as exc:
         logger.error(f"Failed to start scheduler: {exc}")
         return None

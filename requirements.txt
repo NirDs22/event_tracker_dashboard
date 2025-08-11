@@ -1,6 +1,7 @@
 streamlit
 pandas
 plotly
+
 wordcloud
 sqlalchemy
 apscheduler
@@ -15,3 +16,7 @@ feedparser
 facebook-scraper
 lxml_html_clean
 beautifulsoup4
+lxml
+requests
+email-validator
+openai

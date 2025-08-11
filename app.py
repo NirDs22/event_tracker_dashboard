@@ -18,7 +18,7 @@ except Exception:
 
 try:
     from dotenv import load_dotenv
-    ENV_LOADED = load_dotenv()
+    ENV_LOADED = load_dotenv(dotenv_path='/Users/nird/Documents/ENV/.env')
 except Exception:
     ENV_LOADED = False
 
@@ -1312,10 +1312,6 @@ if not os.getenv("UNSPLASH_ACCESS_KEY") and not os.getenv("PEXELS_API_KEY"):
 
 # Facebook scraping now works via web search - no packages needed
 
-if not os.getenv("SMTP_HOST") and not os.getenv("SMTP_SERVER"):
-    st.sidebar.info(
-        "📧 Email digests disabled. Set SMTP_SERVER, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in .env to enable."
-    )
 
 if not os.getenv("OLLAMA_MODEL"):
     st.sidebar.info(
@@ -1759,76 +1755,70 @@ else:
         st.session_state.selected_topic = None
         st.rerun()
         
-    # Enhanced Apple-style topic header
-    col1, col2 = st.columns([1, 0.15])
-    with col1:
-        st_html(dedent(f"""
-        <div style="
-            background: linear-gradient(135deg, {topic.color}, {topic.color}cc); 
-            padding: 3rem 2.5rem; 
-            border-radius: 24px; 
-            margin-bottom: 2rem;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            position: relative;
-            overflow: hidden;
-        ">
-            <div style="
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: url('data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><circle cx=\"20\" cy=\"20\" r=\"1\" fill=\"white\" opacity=\"0.1\"/><circle cx=\"80\" cy=\"60\" r=\"1\" fill=\"white\" opacity=\"0.1\"/><circle cx=\"40\" cy=\"80\" r=\"1\" fill=\"white\" opacity=\"0.1\"/></svg>');
-            "></div>
-            
-            <div style="position: relative; z-index: 1;">
-                <div style="display: flex; align-items: center; margin-bottom: 1.5rem;">
-                    <span style="font-size: 4rem; margin-right: 1.5rem; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.2));">{topic.icon}</span>
-                    <div>
-                        <h1 style="
-                            color: white; 
-                            margin: 0; 
-                            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-                            font-weight: 700;
-                            font-size: 2.75rem;
-                            letter-spacing: -0.02em;
-                            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                        ">{topic.name}</h1>
+    # Redesigned Apple-style topic header
+    st_html(dedent(f'''
+    <div style="
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        background: #fff;
+        border-radius: 24px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.10);
+        border: 1px solid #e5e5ea;
+        margin-bottom: 2.2rem;
+        padding: 3.2rem 2.8rem 2.7rem 2.8rem;
+        position: relative;
+        overflow: hidden;
+        min-height: 210px;
+    ">
+        <div style="display: flex; align-items: center; gap: 2.5rem;">
+            <span style="font-size: 3.7rem; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.13));">{topic.icon}</span>
+            <div>
+                <h1 style="
+                    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                    font-weight: 700;
+                    font-size: 2.6rem;
+                    color: #1C1C1E;
+                    margin: 0 0 0.3rem 0;
+                    letter-spacing: -0.01em;
+                    text-shadow: 0 2px 8px rgba(0,0,0,0.04);
+                ">{topic.name}</h1>
+                <div style="display: flex; gap: 1.7rem; flex-wrap: wrap;">
+                    <div style="color: #555; font-size: 1.08rem; font-weight: 500; display: flex; align-items: center; gap: 0.4rem;">
+                        📅 <span style="opacity:0.85;">{time_ago(topic.last_collected)}</span>
                     </div>
-                </div>
-                
-                <div style="
-                    background: rgba(255, 255, 255, 0.15);
-                    border-radius: 16px;
-                    padding: 1.5rem;
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    backdrop-filter: blur(10px);
-                ">
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-                        <div>
-                            <div style="color: rgba(255,255,255,0.8); font-size: 0.9rem; font-weight: 500; margin-bottom: 0.25rem;">Last Updated</div>
-                            <div style="color: white; font-weight: 600; font-size: 1.1rem;">📅 {time_ago(topic.last_collected)}</div>
-                        </div>
-                        <div>
-                            <div style="color: rgba(255,255,255,0.8); font-size: 0.9rem; font-weight: 500; margin-bottom: 0.25rem;">Keywords</div>
-                            <div style="color: white; font-weight: 600; font-size: 1.1rem;">🔍 {topic.keywords or "None specified"}</div>
-                        </div>
-                        <div>
-                            <div style="color: rgba(255,255,255,0.8); font-size: 0.9rem; font-weight: 500; margin-bottom: 0.25rem;">Profiles Monitored</div>
-                            <div style="color: white; font-weight: 600; font-size: 1.1rem;">👥 {len(topic.profiles.split(',')) if topic.profiles else 0}</div>
-                        </div>
+                    <div style="color: #555; font-size: 1.08rem; font-weight: 500; display: flex; align-items: center; gap: 0.4rem;">
+                        🔍 <span style="opacity:0.85;">{topic.keywords or "None specified"}</span>
+                    </div>
+                    <div style="color: #555; font-size: 1.08rem; font-weight: 500; display: flex; align-items: center; gap: 0.4rem;">
+                        👥 <span style="opacity:0.85;">{len(topic.profiles.split(',') ) if topic.profiles else 0}</span>
                     </div>
                 </div>
             </div>
         </div>
-        """), height=240)
-    
-    with col2:
-        st_html("<br><br>", height=60)  # Spacing
-        if st.button("🏠 **Home**", use_container_width=True, type="secondary"):
-            st.session_state.selected_topic = None
-            st.rerun()
+        <div style="align-self: flex-start; margin-left: 2.5rem;">
+            <button onclick="window.parent.postMessage({{isStreamlitMessage: true, type: 'streamlit:setComponentValue', value: 'home'}}, '*');" style="
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                font-size: 1.1rem;
+                font-weight: 600;
+                background: #f8f9fa;
+                color: #1C1C1E;
+                border: none;
+                border-radius: 12px;
+                padding: 0.7rem 1.4rem;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+                cursor: pointer;
+                transition: background 0.2s;
+            " onmouseover="this.style.background='#ececec'" onmouseout="this.style.background='#f8f9fa'">
+                🏠 Home
+            </button>
+        </div>
+    </div>
+    '''), height=150)
+    # Home button fallback for Streamlit rerun
+    if st.button("🏠 Home", use_container_width=True, type="secondary"):
+        st.session_state.selected_topic = None
+        st.rerun()
     
     posts = (
         session.query(Post)
