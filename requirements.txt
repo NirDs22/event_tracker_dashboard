@@ -1,4 +1,3 @@
-```pip-requirements
 # Core UI and data visualization
 streamlit==1.34.0
 pandas==2.1.0
