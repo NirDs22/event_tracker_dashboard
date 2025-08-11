@@ -1,47 +1,47 @@
 # Core UI and data visualization
-streamlit>=1.38
-pandas>=2.2.3
+streamlit>=1.48
+pandas>=2.3.1
 plotly>=5.17.0
-wordcloud>=1.9.2
-numpy>=2.0
+wordcloud>=1.9.4
+numpy>=2.0.1
 
 # Database
 sqlalchemy>=2.0
 
 # Scheduling and background tasks
-APScheduler>=3.10
+APScheduler>=3.11.0
 
 # Data collection
 snscrape==0.7.0.20230622
 praw>=7.7
 newsapi-python>=0.2.7
 instaloader>=4.10.2
-feedparser>=6.0
+feedparser>=6.0.11
 facebook-scraper>=0.2.59
 lxml_html_clean>=0.1.2
-beautifulsoup4>=4.12.2
-lxml>=4.9.3
-requests>=2.32
-urllib3>=2.0.0
+beautifulsoup4>=4.12.3
+lxml>=5.2.2
+requests>=2.32.3
+urllib3>=2.2,<3
 
-# Utilities
-difflib>=0.1.0
-html>=0.0.1
-pathlib>=1.0.1
+# Utilities (ניקוי: הוסרו stdlib packages כמו difflib/pathlib/html)
+# -- intentionally left blank --
 
-# Email functionality
+# Email functionality (בחר את ה-SDK לפי ה-imports שלך)
 email-validator>=2.1.0
-sib-api-v3-sdk>=7.6.0
+sib-api-v3-sdk==7.6.0
+# אם אתה משתמש ב-SDK החדש:
+# brevo-python
 
 # AI and NLP
-transformers>=4.38.2
-ollama>=0.1.6
+transformers>=4.44.0
+ollama>=0.2.0
 openai>=1.10.0
 
 # Configuration
-python-dotenv>=1.0
+python-dotenv>=1.0.1
 rich>=13.7
 
 # Security
-cryptography>=41.0.0  # For secure connections
-certifi>=2024.2.0     # For HTTPS certificate verification
+cryptography>=43.0.0
+certifi>=2024.7.4
