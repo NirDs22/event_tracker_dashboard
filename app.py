@@ -1333,38 +1333,50 @@ topic_names = [t.name for t in session.query(Topic).all()]
 
 
 
-# --- Newsletter Frequency Option ---
-import json
-import pathlib
-FREQ_FILE = pathlib.Path(".newsletter_freq.json")
-FREQ_OPTIONS = [
-    ("Daily", {"type": "cron", "minute": 0, "hour": 8}),
-    ("Weekly", {"type": "cron", "minute": 0, "hour": 8, "day_of_week": "mon"}),
-    ("Monthly", {"type": "cron", "minute": 0, "hour": 8, "day": 1}),
-    ("Every 1 day", {"type": "interval", "days": 1}),
-    ("Every 2 days", {"type": "interval", "days": 2}),
-    ("Every 3 days", {"type": "interval", "days": 3}),
-    ("Every 4 days", {"type": "interval", "days": 4}),
-    ("Every 5 days", {"type": "interval", "days": 5}),
-    ("Every 6 days", {"type": "interval", "days": 6}),
-]
-default_freq = "Daily"
-saved_freq = default_freq
-if FREQ_FILE.exists():
-    try:
-        saved_freq = json.loads(FREQ_FILE.read_text()).get("freq", default_freq)
-    except Exception:
-        saved_freq = default_freq
-st.sidebar.markdown("### 🕒 Newsletter Frequency")
-freq_labels = [x[0] for x in FREQ_OPTIONS]
-selected_freq = st.sidebar.selectbox("How often to send the newsletter?", freq_labels, index=freq_labels.index(saved_freq) if saved_freq in freq_labels else 0)
-if st.sidebar.button("Save Frequency"):
-    FREQ_FILE.write_text(json.dumps({"freq": selected_freq}))
-    st.sidebar.success(f"Frequency set to: {selected_freq}. Please restart the app to apply.")
-
 # Enhanced sidebar styling
 st.sidebar.markdown("### 🎛️ **Topic Management**")
 st.sidebar.markdown("---")
+# ...existing sidebar content...
+
+# --- Newsletter Frequency Option (now truly at the bottom) ---
+def render_newsletter_freq():
+    import json
+    import pathlib
+    FREQ_FILE = pathlib.Path(".newsletter_freq.json")
+    FREQ_OPTIONS = [
+        ("Daily", {"type": "cron", "minute": 0, "hour": 8}),
+        ("Weekly", {"type": "cron", "minute": 0, "hour": 8, "day_of_week": "mon"}),
+        ("Monthly", {"type": "cron", "minute": 0, "hour": 8, "day": 1}),
+        ("Every 1 day", {"type": "interval", "days": 1}),
+        ("Every 2 days", {"type": "interval", "days": 2}),
+        ("Every 3 days", {"type": "interval", "days": 3}),
+        ("Every 4 days", {"type": "interval", "days": 4}),
+        ("Every 5 days", {"type": "interval", "days": 5}),
+        ("Every 6 days", {"type": "interval", "days": 6}),
+    ]
+    default_freq = "Daily"
+    saved_freq = default_freq
+    if FREQ_FILE.exists():
+        try:
+            saved_freq = json.loads(FREQ_FILE.read_text()).get("freq", default_freq)
+        except Exception:
+            saved_freq = default_freq
+    freq_labels = [x[0] for x in FREQ_OPTIONS]
+    selected_freq = st.sidebar.selectbox(
+        "How often to send the newsletter?",
+        freq_labels,
+        index=freq_labels.index(saved_freq) if saved_freq in freq_labels else 0,
+        key="newsletter_freq_selectbox"
+    )
+    if selected_freq != saved_freq:
+        FREQ_FILE.write_text(json.dumps({"freq": selected_freq}))
+        st.sidebar.success(f"Frequency set to: {selected_freq}. Please restart the app to apply.")
+    st.sidebar.markdown("### 🕒 Newsletter Frequency")
+
+# ...existing code for main app and sidebar...
+
+# Place this at the very end of the sidebar rendering, after all other sidebar elements:
+render_newsletter_freq()
 
 # --- Send Digest Mail Now (send full digest for all topics) ---
 with st.sidebar.expander("📧 Send Digest Mail Now (All Topics)", expanded=False):
