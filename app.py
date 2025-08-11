@@ -1331,9 +1331,55 @@ if "selected_topic" not in st.session_state:
 session = SessionLocal()
 topic_names = [t.name for t in session.query(Topic).all()]
 
+
 # Enhanced sidebar styling
 st.sidebar.markdown("### 🎛️ **Topic Management**")
 st.sidebar.markdown("---")
+
+# --- Send Digest Mail Now (send full digest for all topics) ---
+with st.sidebar.expander("📧 Send Digest Mail Now (All Topics)", expanded=False):
+    digest_email = st.text_input("Target Email Address", key="digest_all_email")
+    if st.button("Send Full Digest Now", key="digest_all_btn"):
+        import traceback
+        from monitoring.notifier import create_digest_html, send_email
+        try:
+            topics = session.query(Topic).all()
+            all_posts = []
+            for topic in topics:
+                posts = (
+                    session.query(Post)
+                    .filter_by(topic_id=topic.id)
+                    .order_by(Post.posted_at.desc())
+                    .limit(10)
+                    .all()
+                )
+                for post in posts:
+                    all_posts.append({
+                        'content': post.content,
+                        'url': post.url,
+                        'source': post.source,
+                        'posted_at': post.posted_at,
+                        'likes': post.likes,
+                        'comments': post.comments,
+                        'topic': topic.name
+                    })
+            if not all_posts:
+                st.warning("No posts found for any topic.")
+                print("[DEBUG] No posts found for any topic.")
+            else:
+                summary = f"Digest includes {len(all_posts)} posts from {len(topics)} topics."
+                html_body = create_digest_html("All Topics", all_posts, summary)
+                print(f"[DEBUG] Sending digest to {digest_email} with {len(all_posts)} posts.")
+                success = send_email(digest_email, "📰 Full Digest: All Topics", html_body, 'html')
+                if success:
+                    st.success(f"Full digest sent to {digest_email}!")
+                    print(f"[DEBUG] Digest sent to {digest_email} successfully.")
+                else:
+                    st.error(f"Failed to send digest to {digest_email}.")
+                    print(f"[DEBUG] Failed to send digest to {digest_email}.")
+        except Exception as e:
+            st.error(f"Error sending digest: {e}")
+            print(f"[DEBUG] Exception: {e}\n{traceback.format_exc()}")
 
 with st.sidebar.expander("➕ **Add New Topic**", expanded=True):
     name = st.text_input("📝 Topic or Person", placeholder="e.g., AI Technology, Elon Musk")
