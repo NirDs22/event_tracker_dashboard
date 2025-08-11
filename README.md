@@ -1,14 +1,18 @@
 # Social & News Monitoring Dashboard
 
-A Streamlit-based dashboard for tracking people or topics across Twitter, Reddit, Facebook and news sites.
+A modern Streamlit-based dashboard for tracking topics, people, or events across multiple social media platforms and news sites, with configurable email digests and AI-powered summaries.
 
 ## Features
 
-- Add topics with custom keywords
-- Automatic collection from Twitter (snscrape), Reddit (PRAW), public Facebook pages (facebook-scraper) and News (NewsAPI or Google News RSS)
-- SQLite database storage using SQLAlchemy
-- Word clouds, time series charts and AI summaries (supports local models via Ollama or HuggingFace)
-- Daily scheduled collection and optional email digests
+- **Multi-platform Monitoring**: Track topics across Twitter/X, Reddit, Facebook, Instagram, YouTube, and news sites
+- **Customizable Topics**: Add topics with custom keywords, profiles, and sources
+- **Sleek UI**: Modern Apple-inspired UI with responsive cards, smooth animations, and intuitive navigation
+- **Data Visualization**: Interactive time series charts, word clouds, and source distribution analytics
+- **AI Summaries**: Generate concise topic summaries using local models via Ollama or HuggingFace
+- **Configurable Email Digests**: Send daily, weekly, or custom frequency email reports
+- **Non-blocking Operations**: Background processing for data collection and email sending
+- **SQLite Database**: Efficient data storage and querying with SQLAlchemy
+- **Photo Collection**: Gather relevant images from Unsplash or Pexels APIs
 
 ## Beginner-Friendly Setup Guide
 
@@ -55,13 +59,23 @@ cp .env.example .env           # macOS/Linux
 copy .env.example .env         # Windows
 ```
 
-All values are **optional**. Without them the app still works using free public data. To unlock more sources:
+All values are **optional**. Without them the app still works using free public data. To unlock more features:
 
-- **NEWSAPI_KEY** – create a free account at [newsapi.org](https://newsapi.org) and paste the key.
-- **Reddit keys** – visit [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps), create an app and copy the client ID and secret.
-- **SMTP settings** – needed only if you want daily email digests.
-- **OLLAMA_MODEL** – install [Ollama](https://ollama.ai) and run `ollama pull qwen:latest`, then set `OLLAMA_MODEL=qwen` for local AI summaries.
-- **Facebook pages** – no key required. When adding a topic, include public Facebook page URLs in the **Profiles** field to collect their posts.
+- **NEWSAPI_KEY** – Create a free account at [newsapi.org](https://newsapi.org) and paste the key
+- **Reddit keys** – Visit [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps), create an app and copy the client ID and secret
+- **UNSPLASH_ACCESS_KEY** or **PEXELS_API_KEY** – Add one of these to enable photo collection for your topics
+- **Email Settings**:
+  - **BREVO_API** – Sign up for a free [Brevo/Sendinblue](https://www.brevo.com/) account and copy your API key
+  - **BREVO_FROM** – Email address to send from (must be validated in your Brevo account)
+  - **BREVO_FROM_NAME** – Display name for the sender
+- **AI Models**:
+  - **OLLAMA_MODEL** – Install [Ollama](https://ollama.ai) and run `ollama pull qwen:latest`, then set `OLLAMA_MODEL=qwen`
+  - **OPENAI_API_KEY** – Or use OpenAI for summary generation
+- **Social Media Sources**:
+  - **Twitter/X** – Uses snscrape (no authentication needed)
+  - **Facebook pages** – No key required. When adding a topic, include public Facebook page URLs in the **Profiles** field
+  - **Instagram** – Add Instagram usernames to the Profiles field
+  - **YouTube** – Uses public search API (no authentication needed)
 
 ### 6. Run the Dashboard
 
@@ -73,10 +87,15 @@ Your browser will open to the dashboard. Use the sidebar to add topics, optional
 
 ### 7. What You'll See
 
-- Time‑series chart of mentions
-- Word cloud of common terms
-- Recent posts with links
-- AI‑generated summary of latest content
+- **Home Dashboard**: Overview of all your topics with key metrics
+- **Topic View**: Detailed analysis of each topic with:
+  - Time‑series charts and source distribution
+  - Word cloud of common terms
+  - Recent posts with links organized by platform
+  - Interactive tabs for News, Reddit, Instagram, Facebook, YouTube, and Photos
+  - AI‑generated summary of latest content
+- **Newsletter Settings**: Configure email digest frequency (daily, weekly, every 2/3/4/5/6 days)
+- **Intuitive Navigation**: Easy Home button navigation between views
 
 ### 8. Troubleshooting & Common Errors
 
@@ -87,10 +106,22 @@ Your browser will open to the dashboard. Use the sidebar to add topics, optional
 | `snscrape not installed` | Install with `pip install snscrape`. |
 | `praw not installed` | Install with `pip install praw`. |
 | `facebook-scraper not installed` | Install with `pip install "facebook-scraper[lxml]" lxml_html_clean`. |
-| `Twitter fetch failed...blocked (404)` | Twitter may temporarily block anonymous scraping. Update to the latest snscrape with `pip install -U snscrape` or try again later. |
+| `Twitter fetch failed...blocked (404)` | Twitter/X may temporarily block anonymous scraping. Update to the latest snscrape with `pip install -U snscrape` or try again later. |
 | `Background scheduler did not start` | The scheduler library may be missing or blocked. Collections can still be triggered manually with **Collect Now**. |
+| `Email sending failed` | Check your Brevo API key and sender email configuration in the `.env` file. |
+| `No photos found` | Set up `UNSPLASH_ACCESS_KEY` or `PEXELS_API_KEY` in your `.env` file to enable photo collection. |
+| `Streamlit RuntimeError` | Try clearing your browser cache or using incognito mode. If persisting, restart the Streamlit server. |
 
 More help and advanced tips are available in the comments within `.env.example` and in the source code.
+
+## Recent Improvements
+
+- **Email Digest Frequency**: Configure newsletter delivery schedule (daily, weekly, or custom frequency)
+- **Non-blocking Email Sending**: Background threading prevents UI freezing during email operations
+- **Improved Email Handling**: Better error handling for the Brevo API with 2xx response support
+- **Enhanced Topic View**: Streamlined navigation with a single Home button and clear topic headers
+- **Responsive Design**: Better mobile compatibility and layout improvements
+- **Pinned Dependencies**: Specific package versions for improved stability
 
 ## Screenshots
 
