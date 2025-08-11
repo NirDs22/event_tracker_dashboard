@@ -1,35 +1,39 @@
 # Core UI and data visualization
-streamlit==1.34.0
-pandas==2.1.0
-plotly==5.17.0
-wordcloud==1.9.2
+streamlit>=1.38
+pandas>=2.2.3
+plotly>=5.17.0
+wordcloud>=1.9.2
 
 # Database
-sqlalchemy==2.0.25
+sqlalchemy>=2.0
 
 # Scheduling and background tasks
-apscheduler==3.10.4
+APScheduler>=3.10
 
 # Data collection
-snscrape==0.7.0.20231117
-praw==7.7.1
-newsapi-python==0.2.7
-instaloader==4.10.2
-feedparser==6.0.10
-facebook-scraper==0.2.59
-lxml_html_clean==0.1.2
-beautifulsoup4==4.12.2
-lxml==4.9.3
-requests==2.31.0
+snscrape>=0.7.0.20231117
+praw>=7.7
+newsapi-python>=0.2.7
+instaloader>=4.10.2
+feedparser>=6.0
+facebook-scraper>=0.2.59
+lxml_html_clean>=0.1.2
+beautifulsoup4>=4.12.2
+lxml>=4.9.3
+requests>=2.32
 
 # Email functionality
-email-validator==2.1.0
-sib-api-v3-sdk==7.6.0
+email-validator>=2.1.0
+sib-api-v3-sdk>=7.6.0
 
 # AI and NLP
-transformers==4.38.2
-ollama==0.1.6
-openai==1.10.0
+transformers>=4.38.2
+ollama>=0.1.6
+openai>=1.10.0
 
 # Configuration
-python-dotenv==1.0.0
+python-dotenv>=1.0
+rich>=13.7
+
+# Added dependency
+numpy>=2.0
