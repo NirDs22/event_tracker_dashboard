@@ -1342,12 +1342,16 @@ st.sidebar.markdown("---")
 def render_newsletter_freq():
     import json
     import pathlib
+    
+    # Add better heading at the top
+    st.sidebar.markdown("### 📧 Newsletter Settings")
+    
     FREQ_FILE = pathlib.Path(".newsletter_freq.json")
     FREQ_OPTIONS = [
         ("Daily", {"type": "cron", "minute": 0, "hour": 8}),
         ("Weekly", {"type": "cron", "minute": 0, "hour": 8, "day_of_week": "mon"}),
         ("Monthly", {"type": "cron", "minute": 0, "hour": 8, "day": 1}),
-        ("Every 1 day", {"type": "interval", "days": 1}),
+        # Removed "Every 1 day" as it's redundant with "Daily"
         ("Every 2 days", {"type": "interval", "days": 2}),
         ("Every 3 days", {"type": "interval", "days": 3}),
         ("Every 4 days", {"type": "interval", "days": 4}),
@@ -1370,58 +1374,94 @@ def render_newsletter_freq():
     )
     if selected_freq != saved_freq:
         FREQ_FILE.write_text(json.dumps({"freq": selected_freq}))
-        st.sidebar.success(f"Frequency set to: {selected_freq}. Please restart the app to apply.")
-    st.sidebar.markdown("### 🕒 Newsletter Frequency")
+        st.sidebar.success(f"✅ Frequency set to: {selected_freq}. Please restart the app to apply.")
 
 # ...existing code for main app and sidebar...
-
-# Place this at the very end of the sidebar rendering, after all other sidebar elements:
-render_newsletter_freq()
 
 # --- Send Digest Mail Now (send full digest for all topics) ---
 with st.sidebar.expander("📧 Send Digest Mail Now (All Topics)", expanded=False):
     digest_email = st.text_input("Target Email Address", key="digest_all_email")
-    if st.button("Send Full Digest Now", key="digest_all_btn"):
-        import traceback
-        from monitoring.notifier import create_digest_html, send_email
-        try:
-            topics = session.query(Topic).all()
-            all_posts = []
-            for topic in topics:
-                posts = (
-                    session.query(Post)
-                    .filter_by(topic_id=topic.id)
-                    .order_by(Post.posted_at.desc())
-                    .limit(10)
-                    .all()
-                )
-                for post in posts:
-                    all_posts.append({
-                        'content': post.content,
-                        'url': post.url,
-                        'source': post.source,
-                        'posted_at': post.posted_at,
-                        'likes': post.likes,
-                        'comments': post.comments,
-                        'topic': topic.name
-                    })
-            if not all_posts:
-                st.warning("No posts found for any topic.")
-                print("[DEBUG] No posts found for any topic.")
-            else:
-                summary = f"Digest includes {len(all_posts)} posts from {len(topics)} topics."
-                html_body = create_digest_html("All Topics", all_posts, summary)
-                print(f"[DEBUG] Sending digest to {digest_email} with {len(all_posts)} posts.")
-                success = send_email(digest_email, "📰 Full Digest: All Topics", html_body, 'html')
-                if success:
-                    st.success(f"Full digest sent to {digest_email}!")
-                    print(f"[DEBUG] Digest sent to {digest_email} successfully.")
-                else:
-                    st.error(f"Failed to send digest to {digest_email}.")
-                    print(f"[DEBUG] Failed to send digest to {digest_email}.")
-        except Exception as e:
-            st.error(f"Error sending digest: {e}")
-            print(f"[DEBUG] Exception: {e}\n{traceback.format_exc()}")
+    
+    # Track email sending status in session state
+    if "email_sending" not in st.session_state:
+        st.session_state.email_sending = False
+    if "email_status" not in st.session_state:
+        st.session_state.email_status = None
+    
+    # Show status if email is currently being sent
+    if st.session_state.email_sending:
+        st.info("📤 Sending email in background... You can continue using the app.")
+    
+    # Show results of previous send operation
+    if st.session_state.email_status == "success":
+        st.success(f"✅ Full digest sent to {st.session_state.get('last_email', '')}!")
+        st.session_state.email_status = None  # Reset after showing
+    elif st.session_state.email_status == "failure":
+        st.error(f"❌ Failed to send digest to {st.session_state.get('last_email', '')}.")
+        st.session_state.email_status = None  # Reset after showing
+        
+    if st.button("Send Full Digest Now", key="digest_all_btn", disabled=st.session_state.email_sending):
+        if not digest_email:
+            st.warning("Please enter an email address.")
+        else:
+            import threading
+            import traceback
+            from monitoring.notifier import create_digest_html, send_email
+            
+            # Store the email for status messages
+            st.session_state.last_email = digest_email
+            st.session_state.email_sending = True
+            
+            # Function to run in background thread
+            def send_digest_in_background():
+                try:
+                    topics = session.query(Topic).all()
+                    all_posts = []
+                    for topic in topics:
+                        posts = (
+                            session.query(Post)
+                            .filter_by(topic_id=topic.id)
+                            .order_by(Post.posted_at.desc())
+                            .limit(10)
+                            .all()
+                        )
+                        for post in posts:
+                            all_posts.append({
+                                'content': post.content,
+                                'url': post.url,
+                                'source': post.source,
+                                'posted_at': post.posted_at,
+                                'likes': post.likes,
+                                'comments': post.comments,
+                                'topic': topic.name
+                            })
+                    if not all_posts:
+                        print("[DEBUG] No posts found for any topic.")
+                        st.session_state.email_status = "failure"
+                    else:
+                        summary = f"Digest includes {len(all_posts)} posts from {len(topics)} topics."
+                        html_body = create_digest_html("All Topics", all_posts, summary)
+                        print(f"[DEBUG] Sending digest to {digest_email} with {len(all_posts)} posts.")
+                        success = send_email(digest_email, "📰 Full Digest: All Topics", html_body, 'html')
+                        if success:
+                            print(f"[DEBUG] Digest sent to {digest_email} successfully.")
+                            st.session_state.email_status = "success"
+                        else:
+                            print(f"[DEBUG] Failed to send digest to {digest_email}.")
+                            st.session_state.email_status = "failure"
+                except Exception as e:
+                    print(f"[DEBUG] Exception: {e}\n{traceback.format_exc()}")
+                    st.session_state.email_status = "failure"
+                finally:
+                    # Always reset the sending flag when done
+                    st.session_state.email_sending = False
+            
+            # Start the background thread and notify user
+            thread = threading.Thread(target=send_digest_in_background)
+            thread.daemon = True  # Allow the thread to be killed when the app exits
+            thread.start()
+            st.info("📤 Sending email in background... You can continue using the app.")
+            st.experimental_rerun()  # Rerun to show the status immediately
 
 with st.sidebar.expander("➕ **Add New Topic**", expanded=True):
     name = st.text_input("📝 Topic or Person", placeholder="e.g., AI Technology, Elon Musk")
@@ -1462,18 +1502,61 @@ st.sidebar.markdown("---")
 # Add email testing section if SMTP is configured
 if os.getenv("SMTP_HOST") or os.getenv("SMTP_SERVER"):
     with st.sidebar.expander("📧 **Test Email Digest**"):
+        # Track test email sending status in session state
+        if "test_email_sending" not in st.session_state:
+            st.session_state.test_email_sending = False
+        if "test_email_status" not in st.session_state:
+            st.session_state.test_email_status = None
+            
         test_email = st.text_input("📧 Test Email", placeholder="your@email.com")
+        
+        # Show status if email is currently being sent
+        if st.session_state.test_email_sending:
+            st.info("📤 Sending test email in background... You can continue using the app.")
+        
+        # Show results of previous send operation
+        if st.session_state.test_email_status == "success":
+            st.success(f"✅ Test digest sent to {st.session_state.get('last_test_email', '')}!")
+            st.session_state.test_email_status = None  # Reset after showing
+        elif st.session_state.test_email_status == "failure":
+            st.error(f"❌ Failed to send test digest to {st.session_state.get('last_test_email', '')}.")
+            st.session_state.test_email_status = None  # Reset after showing
+            
         if topic_names:
             test_topic = st.selectbox("Select Topic", topic_names)
-            if st.button("📨 **Send Test Digest**", use_container_width=True) and test_email and test_topic:
-                topic_obj = session.query(Topic).filter_by(name=test_topic).first()
-                if topic_obj:
-                    with st.spinner("Sending test digest..."):
-                        success = send_test_digest(topic_obj.id, test_email)
-                        if success:
-                            st.sidebar.success(f"✅ Test digest sent to {test_email}!")
-                        else:
-                            st.sidebar.error("❌ Failed to send test digest. Check logs and email configuration.")
+            if st.button("📨 **Send Test Digest**", use_container_width=True, disabled=st.session_state.test_email_sending) and test_email and test_topic:
+                import threading
+                
+                # Store the email for status messages
+                st.session_state.last_test_email = test_email
+                st.session_state.test_email_sending = True
+                
+                # Function to run in background thread
+                def send_test_digest_in_background():
+                    try:
+                        topic_obj = session.query(Topic).filter_by(name=test_topic).first()
+                        if topic_obj:
+                            success = send_test_digest(topic_obj.id, test_email)
+                            if success:
+                                st.session_state.test_email_status = "success"
+                                print(f"[DEBUG] Test digest sent to {test_email} successfully.")
+                            else:
+                                st.session_state.test_email_status = "failure"
+                                print(f"[DEBUG] Failed to send test digest to {test_email}.")
+                    except Exception as e:
+                        import traceback
+                        print(f"[DEBUG] Exception sending test digest: {e}\n{traceback.format_exc()}")
+                        st.session_state.test_email_status = "failure"
+                    finally:
+                        # Always reset the sending flag when done
+                        st.session_state.test_email_sending = False
+                
+                # Start the background thread and notify user
+                thread = threading.Thread(target=send_test_digest_in_background)
+                thread.daemon = True  # Allow the thread to be killed when the app exits
+                thread.start()
+                st.info("📤 Sending test email in background... You can continue using the app.")
+                st.experimental_rerun()  # Rerun to show the status immediately
         else:
             st.info("Create topics first to test email digests")
             
@@ -1567,6 +1650,10 @@ if st.sidebar.button("🔄 **Collect All Topics Now**", type="primary", use_cont
         
         progress_bar.progress(1.0)
         status_text.text("✅ Collection finished!")
+
+# Place the newsletter frequency control at the very end of the sidebar
+st.sidebar.markdown("---")
+render_newsletter_freq()
 
 session.close()
 
