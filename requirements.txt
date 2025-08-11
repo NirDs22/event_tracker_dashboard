@@ -12,7 +12,7 @@ sqlalchemy>=2.0
 APScheduler>=3.10
 
 # Data collection
-snscrape>=0.7.0.20231117
+snscrape==0.7.0.20230622
 praw>=7.7
 newsapi-python>=0.2.7
 instaloader>=4.10.2
