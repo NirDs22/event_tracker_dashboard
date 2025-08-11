@@ -1930,7 +1930,10 @@ else:
         st.session_state.selected_topic = None
         st.rerun()
         
-    # Redesigned Apple-style topic header
+    # Create a container for our combined header and home button
+    header_container = st.container()
+
+    # Redesigned Apple-style topic header with the visible title
     st_html(dedent(f'''
     <div style="
         display: flex;
@@ -1946,7 +1949,7 @@ else:
         overflow: hidden;
         min-height: 210px;
     ">
-        <div style="display: flex; align-items: center; gap: 2.5rem;">
+        <div style="display: flex; align-items: center; gap: 2.5rem; flex: 1;">
             <span style="font-size: 3.7rem; filter: drop-shadow(0 4px 12px rgba(0,0,0,0.13));">{topic.icon}</span>
             <div>
                 <h1 style="
@@ -1971,29 +1974,17 @@ else:
                 </div>
             </div>
         </div>
-        <div style="align-self: flex-start; margin-left: 2.5rem;">
-            <button onclick="window.parent.postMessage({{isStreamlitMessage: true, type: 'streamlit:setComponentValue', value: 'home'}}, '*');" style="
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-                font-size: 1.1rem;
-                font-weight: 600;
-                background: #f8f9fa;
-                color: #1C1C1E;
-                border: none;
-                border-radius: 12px;
-                padding: 0.7rem 1.4rem;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.07);
-                cursor: pointer;
-                transition: background 0.2s;
-            " onmouseover="this.style.background='#ececec'" onmouseout="this.style.background='#f8f9fa'">
-                🏠 Home
-            </button>
-        </div>
+        <!-- The Home button will be rendered by Streamlit below -->
     </div>
-    '''), height=150)
-    # Home button fallback for Streamlit rerun
-    if st.button("🏠 Home", use_container_width=True, type="secondary"):
-        st.session_state.selected_topic = None
-        st.rerun()
+    '''), height=250)
+
+    # Render a Streamlit button for "Home" aligned to the right side of the UI
+    col_left, col_right = st.columns([6, 1])
+    with col_right:
+        if st.button("🏠 Home", key="go_home", use_container_width=True):
+            st.session_state.selected_topic = None
+            st.rerun()
+
     
     posts = (
         session.query(Post)
