@@ -14,18 +14,23 @@ The application includes specific optimizations for Streamlit Cloud:
    - Special CSS files are loaded in the `.streamlit` directory:
      - `style.css`: General styling improvements
      - `custom_css.css`: Cloud-specific fixes for layout issues
+     - `cloud_fixes.css`: Extra aggressive fixes for cloud-specific rendering issues
 
-3. **Card Height Adjustments**:
-   - The app increases card heights slightly when running in the cloud environment
-   - This prevents content truncation which can happen due to different rendering behaviors
+3. **Card Height & Rendering Adjustments**:
+   - Cards have significantly increased heights in cloud environment (100-150px extra)
+   - Card containers are wrapped in HTML divs for better layout control
+   - Scrolling is enabled for cards to prevent content cutoff
 
 4. **Font Handling**:
    - The app uses system fonts as fallbacks when custom fonts can't be loaded
-   - This ensures consistent typography across different deployment environments
+   - Font loading is done through an iframe to bypass Content Security Policy restrictions
+   - Multiple font fallbacks ensure consistent typography
 
-5. **Responsive Layout**:
+5. **Layout Optimizations**:
    - Column layouts use explicit ratios (`[1, 1]` instead of `2`)
-   - Container widths are set for all charts and visualizations
+   - Container widths are set for all elements
+   - Box sizing is enforced to prevent layout shifts
+   - Margins and padding are carefully controlled for consistent display
 
 ## Troubleshooting Cloud Issues
 

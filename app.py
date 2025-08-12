@@ -401,6 +401,9 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
                 line-height: 1.5;
                 color: var(--apple-text);
                 font-size: 14px;
+                margin: 0;
+                width: 100%;
+                box-sizing: border-box;
             }}
             
             .card {{
@@ -412,10 +415,14 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
                 transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
                 height: auto;
                 min-height: 200px;
+                width: 100%;
                 display: flex;
                 flex-direction: column;
                 position: relative;
                 font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                box-sizing: border-box;
+                margin: 0 auto;
+                max-width: 800px;
             }}
             
             .card::before {{
@@ -649,13 +656,25 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
         # Ensure reasonable bounds for the card height
         height = min(max(base, 250), 750)  # Minimum 250px, maximum 750px
         
-        # Adjust height for cloud environment
+        # Adjust height for cloud environment - more aggressive adjustment
         if IN_CLOUD:
-            height += 50  # Add extra padding in cloud environment
+            # Add significant padding in cloud environment
+            height += 100  # More padding to prevent content cutoff
+            
+            # Additional height for specific card types
+            if image_url:
+                height += 50  # More space for image cards
+            if summary_html and len(summary_html) > 100:
+                height += 40  # More space for long text
         
-    st_html(html, height=height, scrolling=False)
+    st_html(html, height=height, scrolling=True)
 
 def render_news_card(item):
+    # Create a container div for better layout in cloud
+    if IS_CLOUD:
+        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+    
+    # Extract data from item
     title = _first(getattr(item, "title", None), item.get("title") if hasattr(item, 'get') else getattr(item, 'title', None))
     summary = _first(getattr(item, "summary", None), getattr(item, "description", None), getattr(item, "content", None),
                      item.get("summary") if hasattr(item, 'get') else None,
@@ -670,9 +689,19 @@ def render_news_card(item):
     age = _first(getattr(item, "age_text", None), 
                  time_ago(getattr(item, "posted_at", None)),
                  item.get("age_text") if hasattr(item, 'get') else None)
+    
+    # Render the card
     _render_card(title, summary, image, age, link, badge="News")
+    
+    # Close the container div
+    if IS_CLOUD:
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_reddit_card(post):
+    # Create a container div for better layout in cloud
+    if IS_CLOUD:
+        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+    
     title = _first(getattr(post, "title", None), post.get("title") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "selftext", None), getattr(post, "content", None),
                      post.get("selftext") if hasattr(post, 'get') else None,
@@ -687,9 +716,18 @@ def render_reddit_card(post):
     age = _first(getattr(post, "age_text", None), 
                  time_ago(getattr(post, "posted_at", None)),
                  post.get("age_text") if hasattr(post, 'get') else None)
+    
     _render_card(title, summary, thumb, age, link, badge="Reddit")
+    
+    # Close the container div
+    if IS_CLOUD:
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_facebook_card(post):
+    # Create a container div for better layout in cloud
+    if IS_CLOUD:
+        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        
     title = _first(getattr(post, "title", None), getattr(post, "page_name", None),
                    post.get("title") if hasattr(post, 'get') else None,
                    post.get("page_name") if hasattr(post, 'get') else None)
@@ -705,9 +743,18 @@ def render_facebook_card(post):
     age = _first(getattr(post, "age_text", None), 
                  time_ago(getattr(post, "posted_at", None)),
                  post.get("age_text") if hasattr(post, 'get') else None)
+                 
     _render_card(title, summary, image, age, link, badge="Facebook")
+    
+    # Close the container div
+    if IS_CLOUD:
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_youtube_card(video):
+    # Create a container div for better layout in cloud
+    if IS_CLOUD:
+        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        
     title = _first(getattr(video, "title", None), video.get("title") if hasattr(video, 'get') else None)
     title = title[:min(124, len(title))].rjust(124)
     summary = _first(getattr(video, "description", None), getattr(video, "content", None),
@@ -722,9 +769,18 @@ def render_youtube_card(video):
     age = _first(getattr(video, "age_text", None), 
                  time_ago(getattr(video, "posted_at", None)),
                  video.get("age_text") if hasattr(video, 'get') else None)
+                 
     _render_card(title, summary, thumb, age, link, badge="YouTube")
+    
+    # Close the container div
+    if IS_CLOUD:
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_instagram_card(post):
+    # Create a container div for better layout in cloud
+    if IS_CLOUD:
+        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        
     title = _first(getattr(post, "username", None), post.get("username") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "caption", None), getattr(post, "content", None),
                      post.get("caption") if hasattr(post, 'get') else None,
@@ -736,7 +792,12 @@ def render_instagram_card(post):
     age = _first(getattr(post, "age_text", None), 
                  time_ago(getattr(post, "posted_at", None)),
                  post.get("age_text") if hasattr(post, 'get') else None)
+                 
     _render_card(title, summary, image, age, link, badge="Instagram")
+    
+    # Close the container div
+    if IS_CLOUD:
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
@@ -798,7 +859,7 @@ except Exception:
 
 # st.set_page_config moved to the top of the file
 
-# Directly inject font links in the head section to ensure proper loading - using iframe to avoid CSP issues
+# Directly inject font links and aggressive CSS fixes for cloud compatibility
 st.components.v1.html("""
 <iframe srcdoc='
 <link rel="preconnect" href="https://applesocial.s3.amazonaws.com" crossorigin>
@@ -812,28 +873,92 @@ st.components.v1.html("""
 ' style="width:0;height:0;border:0;"></iframe>
 
 <style>
+/* --- AGGRESSIVE CLOUD FIXES --- */
+
 /* Set global font fallback system */
 .stApp, .stApp * {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif !important;
 }
 
-/* Fix card container widths */
-.element-container {
-    width: 100%;
+/* Reset box model for more predictable layouts */
+*, *::before, *::after {
+    box-sizing: border-box !important;
 }
 
-/* Ensure columns have consistent widths */
-[data-testid="column"] {
+/* Aggressively fix column layouts */
+div[data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    gap: 1.5rem !important;
+    margin-bottom: 1.5rem !important;
     width: 100% !important;
-    flex: 1 1 auto !important;
-    min-width: 0 !important;
 }
 
-/* Better mobile responsiveness */
-@media (max-width: 640px) {
-    .stApp [data-testid="column"] {
-        width: 100% !important;
-        margin-bottom: 1rem !important;
+/* Make sure columns take equal space and don't shrink */
+div[data-testid="column"] {
+    flex: 1 1 0 !important; 
+    width: 100% !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+/* Fix element container width */
+.element-container {
+    width: 100% !important;
+    padding: 0 !important;
+}
+
+/* Fix HTML containers for cards */
+[data-testid="stHtml"] {
+    width: 100% !important;
+    overflow: visible !important;
+    margin: 0 0 1rem 0 !important;
+    padding: 0 !important;
+}
+
+/* Fix iframe containers */
+iframe:not([style*="width:0"]) {
+    width: 100% !important;
+    margin: 0 auto !important;
+    display: block !important;
+    border: none !important;
+}
+
+/* Force card containers to proper width */
+.stHtml > div {
+    width: 100% !important;
+}
+
+/* Fix image containers */
+.stImage > img {
+    max-width: 100% !important;
+}
+
+/* Cloud-specific fixes */
+@media screen {
+    /* Adjust main container */
+    [data-testid="block-container"] {
+        max-width: 100% !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
+    
+    /* Better spacing for mobile */
+    @media (max-width: 768px) {
+        [data-testid="block-container"] {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+        
+        div[data-testid="stHorizontalBlock"] {
+            flex-direction: column !important;
+        }
+        
+        div[data-testid="column"] {
+            margin-bottom: 1rem !important;
+        }
     }
 }
 </style>

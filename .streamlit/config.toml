@@ -7,6 +7,15 @@ textColor="#111111"
 
 [client]
 toolbarMode="minimal"
+showSidebarNavigation=true
 
 [server]
 headless=true
+enableCORS=true
+enableXsrfProtection=false
+
+[browser]
+gatherUsageStats=false
+
+[global]
+disableWatchdogWarning=true

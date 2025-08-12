@@ -1,0 +1,74 @@
+/* Extra aggressive Streamlit Cloud fixes */
+
+/* Force cards to render correctly */
+.stHtml {
+    width: 100% !important;
+    padding: 0 !important;
+    margin-bottom: 1rem !important;
+    height: auto !important;
+    min-height: 350px !important; /* Ensure cards have enough vertical space */
+}
+
+/* Fix HTML rendering within cards */
+.stHtml iframe {
+    width: 100% !important;
+    height: 350px !important; /* Set minimum iframe height */
+    min-height: 350px !important;
+    border: none !important;
+}
+
+/* Fix column layout issues */
+[data-testid="column"] {
+    width: 100% !important;
+    flex: 1 1 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* Make sure horizontal blocks display correctly */
+[data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-direction: row !important;
+    width: 100% !important;
+    margin-bottom: 20px !important;
+    gap: 20px !important;
+}
+
+/* Fix word cloud container */
+div[data-testid="stExpander"] {
+    width: 100% !important;
+}
+
+/* Adjust main content area padding */
+section[data-testid="stSidebar"] + div {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+}
+
+/* Forcibly unbreak any potential layout issues */
+* {
+    max-width: 100% !important;
+    overflow-wrap: break-word !important;
+}
+
+/* Make all charts responsive */
+.js-plotly-plot, .plotly, .plot-container {
+    width: 100% !important;
+}
+
+/* Fix tabs width */
+[data-baseweb="tab-list"] {
+    width: 100% !important;
+}
+
+/* Handle small screens better */
+@media (max-width: 768px) {
+    [data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+    }
+    
+    .stHtml iframe {
+        height: 400px !important; /* More space on mobile */
+    }
+}
