@@ -32,6 +32,17 @@ The application includes specific optimizations for Streamlit Cloud:
    - Box sizing is enforced to prevent layout shifts
    - Margins and padding are carefully controlled for consistent display
 
+## Fixed Width Layout
+
+The application uses a fixed-width layout for better display consistency in cloud environments:
+
+1. **Main Container**: Limited to 1440px max-width
+2. **Card Content**: Limited to 550px fixed width
+3. **Sidebar**: Fixed at 300px width
+4. **Responsive Design**: Special mobile styles for smaller screens
+
+These fixed dimensions ensure that content appears consistently across different browser window sizes and resolutions, preventing layout issues.
+
 ## Troubleshooting Cloud Issues
 
 If you encounter display issues in Streamlit Cloud:

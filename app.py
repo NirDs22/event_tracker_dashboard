@@ -26,6 +26,7 @@ import html as py_html
 import pandas as pd
 import plotly.express as px
 from wordcloud import WordCloud
+import urllib.parse as _url  # Ensure this import is available
 
 try:
     from bs4 import BeautifulSoup
@@ -422,7 +423,7 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
                 font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
                 box-sizing: border-box;
                 margin: 0 auto;
-                max-width: 800px;
+                max-width: 550px; /* Fixed width for cards */
             }}
             
             .card::before {{
@@ -670,9 +671,9 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
     st_html(html, height=height, scrolling=True)
 
 def render_news_card(item):
-    # Create a container div for better layout in cloud
+    # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
     
     # Extract data from item
     title = _first(getattr(item, "title", None), item.get("title") if hasattr(item, 'get') else getattr(item, 'title', None))
@@ -698,9 +699,9 @@ def render_news_card(item):
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_reddit_card(post):
-    # Create a container div for better layout in cloud
+    # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
     
     title = _first(getattr(post, "title", None), post.get("title") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "selftext", None), getattr(post, "content", None),
@@ -724,9 +725,9 @@ def render_reddit_card(post):
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_facebook_card(post):
-    # Create a container div for better layout in cloud
+    # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
         
     title = _first(getattr(post, "title", None), getattr(post, "page_name", None),
                    post.get("title") if hasattr(post, 'get') else None,
@@ -751,9 +752,9 @@ def render_facebook_card(post):
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_youtube_card(video):
-    # Create a container div for better layout in cloud
+    # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
         
     title = _first(getattr(video, "title", None), video.get("title") if hasattr(video, 'get') else None)
     title = title[:min(124, len(title))].rjust(124)
@@ -777,9 +778,9 @@ def render_youtube_card(video):
         st.markdown('</div>', unsafe_allow_html=True)
 
 def render_instagram_card(post):
-    # Create a container div for better layout in cloud
+    # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container" style="width:100%; margin-bottom:20px;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
         
     title = _first(getattr(post, "username", None), post.get("username") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "caption", None), getattr(post, "content", None),
@@ -873,7 +874,7 @@ st.components.v1.html("""
 ' style="width:0;height:0;border:0;"></iframe>
 
 <style>
-/* --- AGGRESSIVE CLOUD FIXES --- */
+/* --- AGGRESSIVE CLOUD FIXES WITH FIXED WIDTH --- */
 
 /* Set global font fallback system */
 .stApp, .stApp * {
@@ -883,6 +884,27 @@ st.components.v1.html("""
 /* Reset box model for more predictable layouts */
 *, *::before, *::after {
     box-sizing: border-box !important;
+}
+
+/* Fixed width main container for cloud environment */
+.fixed-container {
+    max-width: 1200px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+}
+
+/* Force app container to use fixed width */
+[data-testid="stAppViewContainer"] > div:nth-child(2) {
+    max-width: 1440px !important; 
+    margin: 0 auto !important;
+    width: 100% !important;
+}
+
+/* Fix sidebar width */
+[data-testid="stSidebar"] {
+    width: 280px !important;
+    max-width: 280px !important;
+    min-width: 280px !important;
 }
 
 /* Aggressively fix column layouts */
