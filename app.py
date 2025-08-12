@@ -45,23 +45,42 @@ except Exception:
 import os, sys, json
 import pandas as pd
 import plotly
+import numpy as np
 import streamlit as st  # ensure available in this scope
 
 if "show_diagnostics" not in st.session_state:
     st.session_state["show_diagnostics"] = True  # default ON once
 
 if st.sidebar.checkbox("Show diagnostics", value=st.session_state["show_diagnostics"], key="diag_cb"):
+    # Collect environment and package information
     diag = {
-        "python": sys.version.split()[0],
-        "cwd": os.getcwd(),
-        "has_repo_config": os.path.exists(".streamlit/config.toml"),
-        "streamlit": st.__version__,
-        "pandas": pd.__version__,
-        "plotly": plotly.__version__,
-        "theme.base": st.get_option("theme.base"),
-        "client.toolbarMode": st.get_option("client.toolbarMode"),
+        "environment": {
+            "is_cloud": IS_CLOUD,
+            "python": sys.version.split()[0],
+            "cwd": os.getcwd(),
+            "os_name": os.name,
+            "platform": sys.platform,
+        },
+        "packages": {
+            "streamlit": st.__version__,
+            "pandas": pd.__version__,
+            "plotly": plotly.__version__,
+            "numpy": np.__version__,
+            "has_bs4": BeautifulSoup is not None,
+        },
+        "configuration": {
+            "has_repo_config": os.path.exists(".streamlit/config.toml"),
+            "has_style_css": os.path.exists(".streamlit/style.css"),
+            "has_cloud_fixes": os.path.exists(".streamlit/cloud_fixes.css"),
+            "theme.base": st.get_option("theme.base"),
+            "client.toolbarMode": st.get_option("client.toolbarMode"),
+            "server.headless": st.get_option("server.headless"),
+        }
     }
-    st.sidebar.code(json.dumps(diag, indent=2))
+    
+    # Display expandable diagnostic sections
+    with st.sidebar.expander("Environment & Package Info", expanded=True):
+        st.code(json.dumps(diag, indent=2))
 
 # Load environment variables from .env file if available (for local development)
 try:
