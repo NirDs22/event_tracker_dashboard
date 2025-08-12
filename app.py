@@ -1,3 +1,5 @@
+import app_config  # must be first
+
 import os
 import re
 from pathlib import Path
@@ -7,19 +9,25 @@ from textwrap import dedent
 # Determine if we're running in Streamlit Cloud for compatibility adjustments
 IS_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
 
-# Configure Streamlit page FIRST, before any other st commands
+# Import streamlit after app_config has already configured the page
 import streamlit as st
-st.set_page_config(
-    page_title="Social & News Monitor", 
-    layout="wide",
-    page_icon="📰",
-    initial_sidebar_state="expanded",
-    menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': "Social & News Monitor App"
-    }
+
+# Add any additional menu items
+st._config.set_option("theme.base", "light")
+st._config.set_option("client.toolbarMode", "minimal")
+st._config.set_option("server.headless", True)
+st._config.set_option(
+    "theme.primaryColor", "#4A90E2"
 )
+# Update menu items
+if hasattr(st, 'update_page_config'):
+    st.update_page_config(
+        menu_items={
+            'Get Help': None,
+            'Report a bug': None,
+            'About': "Social & News Monitor App"
+        }
+    )
 
 from streamlit.components.v1 import html as st_html
 import html as py_html
@@ -32,6 +40,28 @@ try:
     from bs4 import BeautifulSoup
 except Exception:
     BeautifulSoup = None
+
+# --- diagnostics (toggleable) ---
+import os, sys, json
+import pandas as pd
+import plotly
+import streamlit as st  # ensure available in this scope
+
+if "show_diagnostics" not in st.session_state:
+    st.session_state["show_diagnostics"] = True  # default ON once
+
+if st.sidebar.checkbox("Show diagnostics", value=st.session_state["show_diagnostics"], key="diag_cb"):
+    diag = {
+        "python": sys.version.split()[0],
+        "cwd": os.getcwd(),
+        "has_repo_config": os.path.exists(".streamlit/config.toml"),
+        "streamlit": st.__version__,
+        "pandas": pd.__version__,
+        "plotly": plotly.__version__,
+        "theme.base": st.get_option("theme.base"),
+        "client.toolbarMode": st.get_option("client.toolbarMode"),
+    }
+    st.sidebar.code(json.dumps(diag, indent=2))
 
 # Load environment variables from .env file if available (for local development)
 try:
