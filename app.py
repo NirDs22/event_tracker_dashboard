@@ -48,6 +48,72 @@ from monitoring.collectors import collect_topic, collect_all_topics_efficiently,
 from monitoring.scheduler import start_scheduler, send_test_digest
 from monitoring.summarizer import summarize, strip_think
 
+# Sidebar behavior: fixed on desktop, toggleable on mobile
+st_html(
+    """
+    <script>
+    const observer = new MutationObserver((mutations, obs) => {
+      const sidebar = parent.document.querySelector('[data-testid="stSidebar"]');
+      const main = parent.document.querySelector('[data-testid="stAppViewContainer"]');
+      const ctrl = parent.document.querySelector('[data-testid="collapsedControl"]');
+      if (sidebar && main) {
+        obs.disconnect();
+        if (ctrl) ctrl.style.display = 'none';
+
+        sidebar.style.position = 'fixed';
+        sidebar.style.top = '0';
+        sidebar.style.left = '0';
+        sidebar.style.height = '100vh';
+        sidebar.style.zIndex = '100';
+
+        const btn = parent.document.createElement('button');
+        btn.id = 'sidebar-toggle';
+        btn.textContent = 'Show Sidebar';
+        btn.style.position = 'fixed';
+        btn.style.top = '10px';
+        btn.style.left = '10px';
+        btn.style.zIndex = '200';
+        btn.style.background = '#007AFF';
+        btn.style.color = '#fff';
+        btn.style.border = 'none';
+        btn.style.padding = '8px 12px';
+        btn.style.borderRadius = '4px';
+        btn.style.cursor = 'pointer';
+        btn.style.display = 'none';
+        parent.document.body.appendChild(btn);
+
+        function adjust() {
+          const w = parent.window.innerWidth;
+          if (w < 768) {
+            sidebar.style.display = 'none';
+            main.style.marginLeft = '0';
+            btn.style.display = 'block';
+          } else {
+            sidebar.style.display = 'block';
+            main.style.marginLeft = '280px';
+            btn.style.display = 'none';
+          }
+        }
+        adjust();
+        parent.window.addEventListener('resize', adjust);
+
+        btn.addEventListener('click', () => {
+          if (sidebar.style.display === 'none') {
+            sidebar.style.display = 'block';
+            main.style.marginLeft = '280px';
+          } else {
+            sidebar.style.display = 'none';
+            main.style.marginLeft = '0';
+          }
+        });
+      }
+    });
+    observer.observe(parent.document, {childList: true, subtree: true});
+    </script>
+    """,
+    height=0,
+)
+
 
 # Utility functions
 def _first(*vals):
