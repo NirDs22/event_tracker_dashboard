@@ -8,8 +8,6 @@ textColor="#111111"
 [client]
 toolbarMode="minimal"
 showSidebarNavigation=true
-# Set fixed layout width
-showSidebarNavigation=true
 
 [server]
 headless=true
@@ -18,10 +16,3 @@ enableXsrfProtection=false
 
 [browser]
 gatherUsageStats=false
-
-[global]
-disableWatchdogWarning=true
-
-[ui]
-# Hide the deployed app menu
-hideSidebarNav=true
