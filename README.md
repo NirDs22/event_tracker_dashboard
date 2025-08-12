@@ -116,6 +116,7 @@ More help and advanced tips are available in the comments within `.env.example` 
 
 ## Recent Improvements
 
+- **Cloud Compatibility**: Enhanced support for Streamlit Cloud deployment with better styling
 - **Email Digest Frequency**: Configure newsletter delivery schedule (daily, weekly, or custom frequency)
 - **Non-blocking Email Sending**: Background threading prevents UI freezing during email operations
 - **Improved Email Handling**: Better error handling for the Brevo API with 2xx response support

@@ -4,13 +4,21 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from textwrap import dedent
 
+# Determine if we're running in Streamlit Cloud for compatibility adjustments
+IS_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
+
 # Configure Streamlit page FIRST, before any other st commands
 import streamlit as st
 st.set_page_config(
     page_title="Social & News Monitor", 
     layout="wide",
     page_icon="📰",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': "Social & News Monitor App"
+    }
 )
 
 from streamlit.components.v1 import html as st_html
@@ -191,6 +199,8 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
     - Behavior: derive a sensible title when missing, show preview only if it adds info beyond title, and avoid duplicates.
     - Output: Renders a Streamlit HTML component with consistent typography.
     """
+    # Determine if we're in Streamlit Cloud environment - use more conservative height
+    IN_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
     # Process and clean inputs - ensure we have fallbacks for missing data
     raw_title = str(title or "").strip()
     raw_summary = str(summary or "").strip()
@@ -639,6 +649,10 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
         # Ensure reasonable bounds for the card height
         height = min(max(base, 250), 750)  # Minimum 250px, maximum 750px
         
+        # Adjust height for cloud environment
+        if IN_CLOUD:
+            height += 50  # Add extra padding in cloud environment
+        
     st_html(html, height=height, scrolling=False)
 
 def render_news_card(item):
@@ -784,8 +798,9 @@ except Exception:
 
 # st.set_page_config moved to the top of the file
 
-# Directly inject font links in the head section to ensure proper loading
+# Directly inject font links in the head section to ensure proper loading - using iframe to avoid CSP issues
 st.components.v1.html("""
+<iframe srcdoc='
 <link rel="preconnect" href="https://applesocial.s3.amazonaws.com" crossorigin>
 <link rel="preconnect" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/" crossorigin>
 <!-- SF Pro fonts preloaded for better performance -->
@@ -794,6 +809,34 @@ st.components.v1.html("""
 <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff" as="font" type="font/woff" crossorigin>
 <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff" as="font" type="font/woff" crossorigin>
 <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff" as="font" type="font/woff" crossorigin>
+' style="width:0;height:0;border:0;"></iframe>
+
+<style>
+/* Set global font fallback system */
+.stApp, .stApp * {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif !important;
+}
+
+/* Fix card container widths */
+.element-container {
+    width: 100%;
+}
+
+/* Ensure columns have consistent widths */
+[data-testid="column"] {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+}
+
+/* Better mobile responsiveness */
+@media (max-width: 640px) {
+    .stApp [data-testid="column"] {
+        width: 100% !important;
+        margin-bottom: 1rem !important;
+    }
+}
+</style>
 """, height=0)
 
 # Apple-inspired Custom CSS with unified typography
