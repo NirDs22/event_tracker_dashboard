@@ -4,9 +4,6 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from textwrap import dedent
 
-# Determine if we're running in Streamlit Cloud for compatibility adjustments
-IS_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
-
 # Configure Streamlit page FIRST, before any other st commands
 import streamlit as st
 st.set_page_config(
@@ -671,10 +668,6 @@ def _render_card(title, summary, image_url, age_text, link, badge="News", topic_
     st_html(html, height=height, scrolling=True)
 
 def render_news_card(item):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-    
     # Extract data from item
     title = _first(getattr(item, "title", None), item.get("title") if hasattr(item, 'get') else getattr(item, 'title', None))
     summary = _first(getattr(item, "summary", None), getattr(item, "description", None), getattr(item, "content", None),
@@ -693,16 +686,8 @@ def render_news_card(item):
     
     # Render the card
     _render_card(title, summary, image, age, link, badge="News")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_reddit_card(post):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-    
     title = _first(getattr(post, "title", None), post.get("title") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "selftext", None), getattr(post, "content", None),
                      post.get("selftext") if hasattr(post, 'get') else None,
@@ -719,16 +704,8 @@ def render_reddit_card(post):
                  post.get("age_text") if hasattr(post, 'get') else None)
     
     _render_card(title, summary, thumb, age, link, badge="Reddit")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_facebook_card(post):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-        
     title = _first(getattr(post, "title", None), getattr(post, "page_name", None),
                    post.get("title") if hasattr(post, 'get') else None,
                    post.get("page_name") if hasattr(post, 'get') else None)
@@ -746,16 +723,8 @@ def render_facebook_card(post):
                  post.get("age_text") if hasattr(post, 'get') else None)
                  
     _render_card(title, summary, image, age, link, badge="Facebook")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_youtube_card(video):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-        
     title = _first(getattr(video, "title", None), video.get("title") if hasattr(video, 'get') else None)
     title = title[:min(124, len(title))].rjust(124)
     summary = _first(getattr(video, "description", None), getattr(video, "content", None),
@@ -772,16 +741,8 @@ def render_youtube_card(video):
                  video.get("age_text") if hasattr(video, 'get') else None)
                  
     _render_card(title, summary, thumb, age, link, badge="YouTube")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_instagram_card(post):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-        
     title = _first(getattr(post, "username", None), post.get("username") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "caption", None), getattr(post, "content", None),
                      post.get("caption") if hasattr(post, 'get') else None,
@@ -795,10 +756,6 @@ def render_instagram_card(post):
                  post.get("age_text") if hasattr(post, 'get') else None)
                  
     _render_card(title, summary, image, age, link, badge="Instagram")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
