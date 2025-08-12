@@ -1639,7 +1639,7 @@ with st.sidebar.expander("📧 Send Digest Mail Now (All Topics)", expanded=Fals
             thread.daemon = True  # Allow the thread to be killed when the app exits
             thread.start()
             st.info("📤 Sending email in background... You can continue using the app.")
-            st.experimental_rerun()  # Rerun to show the status immediately
+            st.rerun()  # Rerun to show the status immediately
 
 with st.sidebar.expander("➕ **Add New Topic**", expanded=True):
     name = st.text_input("📝 Topic or Person", placeholder="e.g., AI Technology, Elon Musk")
@@ -1734,7 +1734,7 @@ if get_secret("SMTP_HOST") or get_secret("SMTP_SERVER") or get_secret("BREVO_API
                 thread.daemon = True  # Allow the thread to be killed when the app exits
                 thread.start()
                 st.info("📤 Sending test email in background... You can continue using the app.")
-                st.experimental_rerun()  # Rerun to show the status immediately
+                st.rerun()  # Rerun to show the status immediately
         else:
             st.info("Create topics first to test email digests")
             
