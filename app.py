@@ -4,9 +4,6 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from textwrap import dedent
 
-# Determine if we're running in Streamlit Cloud for compatibility adjustments
-IS_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
-
 # Configure Streamlit page FIRST, before any other st commands
 import streamlit as st
 st.set_page_config(
@@ -50,7 +47,6 @@ from monitoring.database import init_db, SessionLocal, Topic, Post
 from monitoring.collectors import collect_topic, collect_all_topics_efficiently, fetch_twitter_nitter
 from monitoring.scheduler import start_scheduler, send_test_digest
 from monitoring.summarizer import summarize, strip_think
-
 
 # Utility functions
 def _first(*vals):
@@ -193,488 +189,37 @@ def _add_topic_underlines(text, topic_name):
     except Exception:
         return py_html.escape(text)
 
+
+
 def _render_card(title, summary, image_url, age_text, link, badge="News", topic_name=None, height=None):
-    """Render a content card with proper title and summary display.
-    Contract:
-    - Inputs: raw title/summary may be None/HTML; image/link optional; badge text.
-    - Behavior: derive a sensible title when missing, show preview only if it adds info beyond title, and avoid duplicates.
-    - Output: Renders a Streamlit HTML component with consistent typography.
-    """
-    # Determine if we're in Streamlit Cloud environment - use more conservative height
-    IN_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
-    # Process and clean inputs - ensure we have fallbacks for missing data
-    raw_title = str(title or "").strip()
-    raw_summary = str(summary or "").strip()
-    
-    # Clean inputs with proper HTML sanitization
-    title = _to_text(raw_title)
-    summary = _to_text(raw_summary) or ""
-    image_url = _to_text(image_url) or ""
+    """Render a minimal responsive content card."""
+    title = _to_text(title) or "Untitled"
+    summary = _to_text(summary)
+    image_url = _to_text(image_url)
     age_text = _to_text(age_text) or "Recently"
-    link = _to_text(link) or ""
-    
-    # If title is missing/placeholder, derive it from summary or link
-    def _derive_title():
-        # Use first sentence or first ~90 chars of summary
-        if summary:
-            first = summary.split('. ')[0].strip()
-            candidate = first if len(first) >= 12 else summary[:90]
-            candidate = candidate.strip().rstrip('.,;:')
-            if candidate:
-                return candidate
-        # Fallback to domain from link
-        if link:
-            try:
-                import urllib.parse as _url
-                netloc = _url.urlparse(link).netloc
-                if netloc:
-                    return netloc.replace('www.', '')
-            except Exception:
-                pass
-        return "Untitled"
-    
-    if not title or title.strip().lower() in {"untitled", "(untitled)", "unknown", ""}:
-        title = _derive_title()
-    
-    # Prepare title for display
-    if len(title) > 120:
-        title = title[:117] + "..."
-    
-    # Create HTML-safe title with topic highlighting if needed
+    link = _to_text(link)
     title_html = _add_topic_underlines(title, topic_name) if topic_name else py_html.escape(title)
-    
-    # Process summary - ensure it adds value beyond the title and isn't self-duplicated
-    # 1) Remove title fragments from summary when they appear inside it
-    def _strip_title_from_summary(s, t):
-        if not s:
-            return s
-        cleaned = s
-        if t and len(t) >= 12:
-            try:
-                pattern = re.compile(re.escape(t), re.IGNORECASE)
-                cleaned = pattern.sub(" ", cleaned)
-            except Exception:
-                pass
-        # Deduplicate repeated segments split by common separators
-        parts = re.split(r"\s*[\-|\u2013\u2014\|]\s+", cleaned)
-        seen = set()
-        uniq_parts = []
-        for p in parts:
-            key = p.strip().lower()
-            if key and key not in seen:
-                uniq_parts.append(p.strip())
-                seen.add(key)
-        cleaned = " - ".join(uniq_parts) if uniq_parts else cleaned
-        # If the text is an exact double (e.g., X X), collapse to first half
-        half = len(cleaned) // 2
-        if len(cleaned) > 40 and cleaned[:half].strip().lower() == cleaned[half:].strip().lower():
-            cleaned = cleaned[:half].strip()
-        # Normalize whitespace
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        return cleaned
-    
-    # Keep a copy of the original summary for fallback
-    _orig_summary = summary
-    summary = _strip_title_from_summary(summary, title)
-
-    # Helper to choose the best preview text
-    def _choose_preview(orig_s: str, cleaned_s: str, t: str, badge_txt: str) -> str:
-        # Prefer cleaned summary if it's reasonably informative
-        candidate = cleaned_s or ""
-        # If too short, try to pick the next informative sentence from the original
-        if len(candidate) < 30 and orig_s:
-            sentences = re.split(r"(?<=[\.!?])\s+", orig_s)
-            for snt in sentences[:4]:
-                if len(snt) >= 20 and _is_meaningfully_different(t, snt):
-                    candidate = snt.strip()
-                    break
-        # If still short and it's News/Reddit, allow a lighter check
-        if len(candidate) < 30 and badge_txt in {"News", "Reddit"} and orig_s:
-            # Use the original but remove exact title tokens, then trim
-            fallback = _strip_title_from_summary(orig_s, t)
-            candidate = fallback if len(fallback) >= 20 else orig_s
-        candidate = (candidate or "").strip()
-        return candidate
-    
-    # First verify we actually have a summary and it's not just the title repeated
-    has_meaningful_summary = False
-    summary_html = ""
-    preview = _choose_preview(_orig_summary, summary, title, badge)
-    # Relax: show if preview has at least 20 chars or passes meaningful-different test
-    if preview and (len(preview) >= 20 or _is_meaningfully_different(title, preview)):
-        has_meaningful_summary = True
-        # Clamp length with soft sentence boundary
-        if len(preview) > 320:
-            cut = max(preview.rfind('. ', 220, 320), preview.rfind(' ', 260, 320))
-            cut = cut if cut != -1 else 300
-            preview = preview[:cut].rstrip() + "..."
-        summary_html = _add_topic_underlines(preview, topic_name) if topic_name else py_html.escape(preview)
-    
-    # Log for debugging if needed
-    # print(f"Title: {title}\nSummary: {summary}\nMeaningful: {has_meaningful_summary}")
-
-    # Apple-inspired card design with professional typography
-    html = dedent(f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <!-- Preload SF Pro fonts for better performance -->
-        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff" as="font" type="font/woff" crossorigin>
-        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff" as="font" type="font/woff" crossorigin>
-        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff" as="font" type="font/woff" crossorigin>
-        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff" as="font" type="font/woff" crossorigin>
-        <link rel="preload" href="https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff" as="font" type="font/woff" crossorigin>
-        
-        <!-- Load SF Pro fonts -->
-        <style>
-            /* SF Pro Font declarations */
-            @font-face {{
-                font-family: 'SF Pro Display';
-                src: local('SF Pro Display'), 
-                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff') format('woff');
-                font-weight: 400;
-                font-display: swap;
-            }}
-            @font-face {{
-                font-family: 'SF Pro Display';
-                src: local('SF Pro Display Medium'), 
-                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff') format('woff');
-                font-weight: 500;
-                font-display: swap;
-            }}
-            @font-face {{
-                font-family: 'SF Pro Display';
-                src: local('SF Pro Display Semibold'), 
-                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff') format('woff');
-                font-weight: 600;
-                font-display: swap;
-            }}
-            @font-face {{
-                font-family: 'SF Pro Text';
-                src: local('SF Pro Text'), 
-                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff') format('woff');
-                font-weight: 400;
-                font-display: swap;
-            }}
-            @font-face {{
-                font-family: 'SF Pro Text';
-                src: local('SF Pro Text Medium'), 
-                     url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff') format('woff');
-                font-weight: 500;
-                font-display: swap;
-            }}
-        </style>
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-                -webkit-font-smoothing: antialiased;
-                -moz-osx-font-smoothing: grayscale;
-                text-rendering: optimizeLegibility;
-            }}
-            
-            /* Add specific rule to enforce font family */
-            .title, .preview, .badge, .age, .view-btn {{
-                font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-            }}
-            
-            :root {{
-                --apple-blue: #007AFF;
-                --apple-blue-hover: #0056CC;
-                --apple-gray: #8E8E93;
-                --apple-gray-light: #F2F2F7;
-                --apple-text: #1C1C1E;
-                --apple-text-secondary: #3A3A3C;
-                --apple-text-tertiary: #8E8E93;
-                --apple-card: #FFFFFF;
-                --apple-border: #E5E5EA;
-                --apple-shadow: rgba(0, 0, 0, 0.08);
-                --apple-shadow-hover: rgba(0, 0, 0, 0.16);
-            }}
-            
-            body {{
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-                background: var(--apple-gray-light);
-                padding: 8px;
-                line-height: 1.5;
-                color: var(--apple-text);
-                font-size: 14px;
-                margin: 0;
-                width: 100%;
-                box-sizing: border-box;
-            }}
-            
-            .card {{
-                background: var(--apple-card);
-                border-radius: 16px;
-                box-shadow: 0 4px 20px var(--apple-shadow);
-                border: 1px solid var(--apple-border);
-                overflow: hidden;
-                transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-                height: auto;
-                min-height: 200px;
-                width: 100%;
-                display: flex;
-                flex-direction: column;
-                position: relative;
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-                box-sizing: border-box;
-                margin: 0 auto;
-                max-width: 550px; /* Fixed width for cards */
-            }}
-            
-            .card::before {{
-                content: '';
-                position: absolute;
-                top: 0;
-                left: 0;
-                right: 0;
-                height: 4px;
-                background: linear-gradient(90deg, var(--apple-blue), #5856D6, #FF9500);
-            }}
-            
-            .card:hover {{
-                transform: translateY(-6px);
-                box-shadow: 0 12px 40px var(--apple-shadow-hover);
-            }}
-            
-            .card-header {{
-                padding: 16px 20px 12px 20px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                border-bottom: 1px solid var(--apple-border);
-                background: rgba(248, 250, 252, 0.5);
-            }}
-            
-            .badge {{
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 12px;
-                font-weight: 600;
-                color: var(--apple-text);
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-            }}
-            
-            .age {{
-                font-size: 11px;
-                color: var(--apple-text-tertiary);
-                font-weight: 500;
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-            }}
-            
-            .card-body {{
-                padding: 0 24px;
-                flex-grow: 1;
-                display: flex;
-                flex-direction: column;
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-            }}
-            
-            .title {{
-                font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-                font-size: 17px;
-                font-weight: 600;
-                color: var(--apple-text);
-                line-height: 1.3;
-                margin: 16px 0 12px 0;
-                letter-spacing: -0.01em;
-                display: -webkit-box;
-                -webkit-line-clamp: 3;
-                -webkit-box-orient: vertical;
-                overflow: hidden;
-            }}
-            
-            .image-container {{
-                margin: 14px 0 18px 0;
-                border-radius: 16px;
-                overflow: hidden;
-                background: var(--apple-gray-light);
-                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-            }}
-            
-            .image {{
-                width: 100%;
-                height: 180px;
-                object-fit: cover;
-                display: block;
-                transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-            }}
-            
-            .image:hover {{
-                transform: scale(1.05);
-            }}
-            
-            .preview {{
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-                font-size: 14px;
-                color: var(--apple-text-secondary);
-                line-height: 1.5;
-                margin: 4px 0 20px 0;
-                padding: 0 1px;
-                display: -webkit-box;
-                -webkit-line-clamp: 4;
-                -webkit-box-orient: vertical;
-                overflow: hidden;
-                flex-grow: 1;
-                letter-spacing: 0;
-            }}
-            
-            .card-footer {{
-                padding: 16px 24px 24px 24px;
-                border-top: 1px solid var(--apple-border);
-                margin-top: auto;
-                background: rgba(248, 249, 250, 0.3);
-            }}
-            
-            .view-btn {{
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                gap: 10px;
-                padding: 14px 20px;
-                background: linear-gradient(135deg, var(--apple-blue), var(--apple-blue-hover));
-                color: white;
-                text-decoration: none;
-                border-radius: 12px;
-                font-size: 15px;
-                font-weight: 600;
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-                transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-                border: none;
-                cursor: pointer;
-                box-shadow: 0 4px 15px rgba(0, 122, 255, 0.3);
-                width: 100%;
-                min-height: 48px;
-            }}
-            
-            .view-btn:hover {{
-                background: linear-gradient(135deg, var(--apple-blue-hover), #003d99);
-                transform: translateY(-2px);
-                box-shadow: 0 6px 20px rgba(0, 122, 255, 0.4);
-                text-decoration: none;
-                color: white;
-            }}
-            
-            .view-btn:active {{
-                transform: translateY(0);
-            }}
-            
-            .icon {{
-                font-size: 16px;
-            }}
-            
-            u {{
-                text-decoration: underline;
-                text-decoration-color: var(--apple-blue);
-                text-decoration-thickness: 2px;
-                text-underline-offset: 3px;
-                text-decoration-style: solid;
-            }}
-            
-            /* Ensure no text cutoff */
-            .card-body {{
-                min-height: 120px;
-                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-            }}
-        </style>
-    </head>
-    <body>
-        <!-- Ensure fonts are loaded -->
-        <script>
-            document.fonts.ready.then(function() {{
-                document.body.classList.add('fonts-loaded');
-            }});
-        </script>
-        
+    summary_html = _add_topic_underlines(summary, topic_name) if summary else ""
+    image_html = f'<img src="{py_html.escape(image_url)}" class="thumb" alt="preview">' if image_url else ""
+    summary_block = f"<p>{summary_html}</p>" if summary_html else ""
+    st.markdown(
+        f"""
         <div class="card">
             <div class="card-header">
-                <div class="badge">
-                    <span class="icon">{('📰' if badge == 'News' else '👽' if badge == 'Reddit' else '📘' if badge == 'Facebook' else '📺' if badge == 'YouTube' else '📷' if badge == 'Instagram' else '📄')}</span>
-                    {py_html.escape(badge)}
-                </div>
-                <div class="age">{py_html.escape(age_text)}</div>
+                <span class="badge">{py_html.escape(badge)}</span>
+                <span class="age">{py_html.escape(age_text)}</span>
             </div>
-            
             <div class="card-body">
-                <!-- Force consistent font styling -->
-                <style>
-                    .title, .preview {{
-                        font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-                    }}
-                </style>
-                
-                <!-- Title always visible -->
-                <div class="title">{title_html}</div>
-                
-                <!-- Image if available -->
-                {f'''<div class="image-container">
-                    <img class="image" src="{py_html.escape(image_url)}" alt="Content image" loading="lazy" referrerpolicy="no-referrer">
-                </div>''' if image_url else ''}
-                
-                <!-- Preview content only if it adds value beyond the title -->
-                {f'<div class="preview">{summary_html}</div>' if summary_html else ''}
+                <h3><a href="{py_html.escape(link)}" target="_blank">{title_html}</a></h3>
+                {image_html}
+                {summary_block}
             </div>
-            
-            {f'''<div class="card-footer">
-                <a href="{py_html.escape(link)}" target="_blank" rel="noopener" class="view-btn">
-                    <span class="icon">🔗</span> Read More
-                </a>
-            </div>''' if link else ''}
         </div>
-    </body>
-    </html>
-    """)
-    
-    # Calculate appropriate height based on content
-    if height is None:
-        # Base height for card with just title and header/footer
-        base = 280
-        
-        # Add space for image if present
-        if image_url: 
-            base += 220  # Space for image and margins
-            
-        # Add space for content preview based on its length
-        if summary_html:
-            # Roughly estimate 24px per line of text (assuming 60 chars per line)
-            text_length = len(summary_html)
-            estimated_lines = min(4, max(1, text_length // 60))
-            base += estimated_lines * 24 + 30  # Add lines plus margins
-            
-        # Add space for longer titles (assuming line breaks)
-        title_length = len(title)
-        if title_length > 30:
-            estimated_title_lines = min(3, max(1, title_length // 30))
-            base += (estimated_title_lines - 1) * 24  # Add space for extra lines
-            
-        # Ensure reasonable bounds for the card height
-        height = min(max(base, 250), 750)  # Minimum 250px, maximum 750px
-        
-        # Adjust height for cloud environment - more aggressive adjustment
-        if IN_CLOUD:
-            # Add significant padding in cloud environment
-            height += 100  # More padding to prevent content cutoff
-            
-            # Additional height for specific card types
-            if image_url:
-                height += 50  # More space for image cards
-            if summary_html and len(summary_html) > 100:
-                height += 40  # More space for long text
-        
-    st_html(html, height=height, scrolling=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
 def render_news_card(item):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-    
     # Extract data from item
     title = _first(getattr(item, "title", None), item.get("title") if hasattr(item, 'get') else getattr(item, 'title', None))
     summary = _first(getattr(item, "summary", None), getattr(item, "description", None), getattr(item, "content", None),
@@ -693,16 +238,8 @@ def render_news_card(item):
     
     # Render the card
     _render_card(title, summary, image, age, link, badge="News")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_reddit_card(post):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-    
     title = _first(getattr(post, "title", None), post.get("title") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "selftext", None), getattr(post, "content", None),
                      post.get("selftext") if hasattr(post, 'get') else None,
@@ -719,16 +256,8 @@ def render_reddit_card(post):
                  post.get("age_text") if hasattr(post, 'get') else None)
     
     _render_card(title, summary, thumb, age, link, badge="Reddit")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_facebook_card(post):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-        
     title = _first(getattr(post, "title", None), getattr(post, "page_name", None),
                    post.get("title") if hasattr(post, 'get') else None,
                    post.get("page_name") if hasattr(post, 'get') else None)
@@ -746,16 +275,8 @@ def render_facebook_card(post):
                  post.get("age_text") if hasattr(post, 'get') else None)
                  
     _render_card(title, summary, image, age, link, badge="Facebook")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_youtube_card(video):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-        
     title = _first(getattr(video, "title", None), video.get("title") if hasattr(video, 'get') else None)
     title = title[:min(124, len(title))].rjust(124)
     summary = _first(getattr(video, "description", None), getattr(video, "content", None),
@@ -772,16 +293,8 @@ def render_youtube_card(video):
                  video.get("age_text") if hasattr(video, 'get') else None)
                  
     _render_card(title, summary, thumb, age, link, badge="YouTube")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 def render_instagram_card(post):
-    # Create a container div for better layout in cloud with fixed width
-    if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
-        
     title = _first(getattr(post, "username", None), post.get("username") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "caption", None), getattr(post, "content", None),
                      post.get("caption") if hasattr(post, 'get') else None,
@@ -795,10 +308,6 @@ def render_instagram_card(post):
                  post.get("age_text") if hasattr(post, 'get') else None)
                  
     _render_card(title, summary, image, age, link, badge="Instagram")
-    
-    # Close the container div
-    if IS_CLOUD:
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
@@ -986,480 +495,29 @@ iframe:not([style*="width:0"]) {
 </style>
 """, height=0)
 
-# Apple-inspired Custom CSS with unified typography
-st.markdown(dedent("""
-<style>
-/* SF Pro Font Definitions */
-@font-face {{
-    font-family: 'SF Pro Display';
-    src: local('SF Pro Display'), 
-         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff') format('woff');
-    font-weight: 400;
-    font-display: swap;
-}}
-@font-face {{
-    font-family: 'SF Pro Display';
-    src: local('SF Pro Display Medium'), 
-         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff') format('woff');
-    font-weight: 500;
-    font-display: swap;
-}}
-@font-face {{
-    font-family: 'SF Pro Display';
-    src: local('SF Pro Display Semibold'), 
-         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff') format('woff');
-    font-weight: 600;
-    font-display: swap;
-}}
-@font-face {{
-    font-family: 'SF Pro Text';
-    src: local('SF Pro Text'), 
-         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-regular-webfont.woff') format('woff');
-    font-weight: 400;
-    font-display: swap;
-}}
-@font-face {{
-    font-family: 'SF Pro Text';
-    src: local('SF Pro Text Medium'), 
-         url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscotext-medium-webfont.woff') format('woff');
-    font-weight: 500;
-    font-display: swap;
-}}
 
-/* Preload fonts for better performance */
-
-/* Global Apple-inspired styling */
-* {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "kern", "liga", "calt";
-}
-
-/* Root variables for consistent theming */
-:root {
-    --apple-blue: #007AFF;
-    --apple-blue-hover: #0056CC;
-    --apple-gray: #8E8E93;
-    --apple-gray-light: #F6F6F7;
-    --apple-gray-medium: #AEAEB2;
-    --apple-text: #1C1C1E;
-    --apple-text-secondary: #3A3A3C;
-    --apple-background: #FFFFFF;
-    --apple-card: #FFFFFF;
-    --apple-border: #E5E5EA;
-    --apple-shadow: rgba(0, 0, 0, 0.08);
-    --apple-shadow-hover: rgba(0, 0, 0, 0.16);
-    --sidebar-bg: #F6F6F7;
-    --sidebar-border: #E5E5EA;
-}
-
-/* Force consistent fonts across ALL elements */
-html, body, div, span, applet, object, iframe,
-h1, h2, h3, h4, h5, h6, p, blockquote, pre,
-a, abbr, acronym, address, big, cite, code,
-del, dfn, em, img, ins, kbd, q, s, samp,
-small, strike, strong, sub, sup, tt, var,
-b, u, i, center,
-dl, dt, dd, ol, ul, li,
-fieldset, form, label, legend,
-table, caption, tbody, tfoot, thead, tr, th, td,
-article, aside, canvas, details, embed, 
-figure, figcaption, footer, header, hgroup, 
-menu, nav, output, ruby, section, summary,
-time, mark, audio, video {
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-}
-
-/* Headings use SF Pro Display */
-h1, h2, h3, h4, h5, h6 {
-    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-    font-weight: 600 !important;
-    color: var(--apple-text) !important;
-    letter-spacing: -0.01em !important;
-    line-height: 1.3 !important;
-    margin-bottom: 0.5em !important;
-    margin-top: 1em !important;
-}
-
-h1 { font-size: 32px !important; }
-h2 { font-size: 26px !important; }
-h3 { font-size: 22px !important; }
-h4 { font-size: 18px !important; }
-
-/* Override ALL Streamlit component fonts */
-.stApp, .stApp * {
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-    letter-spacing: -0.01em;
-}
-
-/* Specifically target all text elements */
-.stMarkdown, .stMarkdown *, .stText, .stText *, .stCaption, .stCaption *, 
-.stWrite, .stWrite *, .stMetric, .stMetric *, p, p *, span, span *, 
-div, div *, label, label *, .stSelectbox, .stSelectbox *, .stButton, .stButton *,
-.stTabs, .stTabs *, .stInfo, .stInfo *, .stSuccess, .stSuccess *, 
-.stWarning, .stWarning *, .stError, .stError * {
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-    color: var(--apple-text) !important;
-}
-
-/* Main app background */
-/* Main app background: white */
-.main .block-container {
-    background-color: #fff !important;
-    padding: 1.5rem !important;
-    max-width: 1200px !important;
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-    line-height: 1.5 !important;
-    box-shadow: 0 2px 16px rgba(0,0,0,0.04);
-    border-radius: 18px;
-}
-
-/* Beautiful main header */
-.main-header {
-    background: linear-gradient(135deg, var(--apple-blue), #5856D6);
-    padding: 2rem 1.2rem;
-    border-radius: 20px;
-    margin-bottom: 1.2rem;
-    text-align: center;
-    color: white;
-    box-shadow: 0 8px 24px rgba(0, 122, 255, 0.18);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.main-header h1 {
-    color: white !important;
-    font-weight: 700 !important;
-    font-size: 2rem !important;
-    margin-bottom: 0.5rem !important;
-    letter-spacing: -0.01em !important;
-    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-}
-
-/* Section headings */
-.section-heading {
-    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-    font-weight: 600 !important;
-    color: var(--apple-text) !important;
-    margin-bottom: 0.7rem !important;
-    letter-spacing: -0.01em !important;
-    font-size: 1.15rem !important;
-}
-
-h2.section-heading {
-    font-size: 1.25rem !important;
-    margin-top: 1.2rem !important;
-}
-
-h3.section-heading {
-    font-size: 1.1rem !important;
-    margin-top: 1rem !important;
-}
-
-.main-header p {
-    color: rgba(255, 255, 255, 0.9) !important;
-    font-size: 1.125rem !important;
-    font-weight: 400 !important;
-    line-height: 1.5 !important;
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-}
-
-/* Enhanced metric cards */
-.metric-card {
-    background: var(--apple-card);
-    padding: 1.1rem 0.8rem;
-    border-radius: 14px;
-    box-shadow: 0 2px 10px var(--apple-shadow);
-    text-align: center;
-    border: 1px solid var(--apple-border);
-    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-    position: relative;
-    overflow: hidden;
-}
-
-.metric-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: linear-gradient(90deg, var(--apple-blue), #5856D6, #FF9500);
-}
-
-.metric-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 30px var(--apple-shadow-hover);
-}
-
-.metric-card h3 {
-    font-size: 2.5rem !important;
-    font-weight: 700 !important;
-    margin: 0.5rem 0 !important;
-    background: linear-gradient(135deg, var(--apple-blue), #5856D6);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-}
-
-.metric-card p {
-    font-size: 0.9rem !important;
-    font-weight: 500 !important;
-    color: var(--apple-text-secondary) !important;
-    margin: 0 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-}
-
-/* Enhanced topic cards */
-.topic-card {
-    background: var(--apple-card);
-    border-radius: 20px;
-    padding: 2rem;
-    margin: 1.5rem 0;
-    box-shadow: 0 4px 20px var(--apple-shadow);
-    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-    border: 1px solid var(--apple-border);
-    position: relative;
-    overflow: hidden;
-}
-
-.topic-card:hover {
-    transform: translateY(-6px) scale(1.02);
-    box-shadow: 0 12px 40px var(--apple-shadow-hover);
-}
-
-/* Force button fonts */
-.stButton > button, button {
-    font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif !important;
-    font-weight: 600 !important;
-    border-radius: 12px !important;
-    transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) !important;
-    border: none !important;
-    padding: 0.75rem 1.5rem !important;
-    font-size: 0.9rem !important;
-}
-
-.stButton > button[kind="primary"], button[kind="primary"] {
-    background: linear-gradient(135deg, var(--apple-blue), var(--apple-blue-hover)) !important;
-    color: white !important;
-    box-shadow: 0 4px 15px rgba(0, 122, 255, 0.3) !important;
-}
-
-.stButton > button:hover, button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4) !important;
-}
-
-/* Enhanced sidebar */
-/* Enhanced sidebar with light grey background */
-.css-1d391kg, .css-1kyxreq, [data-testid="stSidebar"] {
-    background-color: var(--sidebar-bg) !important;
-    border-right: 1px solid var(--sidebar-border) !important;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-    box-shadow: 2px 0 8px rgba(0,0,0,0.03);
-}
-
-/* Better tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 4px;
-    background-color: var(--light-gray);
-    border-radius: 10px;
-    padding: 4px;
-}
-
-.stTabs [data-baseweb="tab"] {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-    font-weight: 500 !important;
-    padding: 12px 20px !important;
-    border-radius: 8px !important;
-    background-color: transparent !important;
-    color: var(--text-secondary) !important;
-    border: none !important;
-    transition: all 0.2s ease !important;
-}
-
-.stTabs [data-baseweb="tab"]:hover {
-    background-color: var(--card-bg) !important;
-    color: var(--text-primary) !important;
-}
-
-.stTabs [data-baseweb="tab"][aria-selected="true"] {
-    background-color: var(--card-bg) !important;
-    color: var(--text-primary) !important;
-    box-shadow: 0 2px 8px var(--card-shadow) !important;
-}
-
-/* Metric display improvements */
-.stMetric {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-}
-
-.stMetric > div {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-}
-
-.stMetric [data-testid="metric-value"] {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 2rem !important;
-}
-
-.stMetric [data-testid="metric-label"] {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-    font-weight: 500 !important;
-    color: var(--text-secondary) !important;
-}
-
-/* Info boxes */
-.stInfo, .stSuccess, .stWarning, .stError {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-    border-radius: 10px !important;
-    border: none !important;
-}
-
-/* Input fields */
-.stTextInput input, .stSelectbox select, .stTextArea textarea {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-    border-radius: 8px !important;
-    border: 1px solid var(--card-border) !important;
-    background-color: var(--card-bg) !important;
-}
-
-/* Hide Streamlit branding */
-.css-164nlkn, #MainMenu, footer, header {
-    display: none !important;
-}
-
-/* Underlines for highlighted content */
-u {
-    text-underline-offset: 3px;
-    text-decoration-thickness: 2px;
-    text-decoration-color: var(--primary-blue);
-    text-decoration-style: solid;
-}
-
-/* Source badges */
-.source-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-radius: 16px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    margin: 2px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.reddit-badge { background: linear-gradient(135deg, #FF4500, #CC3400); color: white; }
-.news-badge { background: linear-gradient(135deg, #2563EB, #1D4ED8); color: white; }
-.instagram-badge { background: linear-gradient(135deg, #E4405F, #C13584); color: white; }
-.facebook-badge { background: linear-gradient(135deg, #1877F2, #1565C0); color: white; }
-.youtube-badge { background: linear-gradient(135deg, #FF0000, #CC0000); color: white; }
-.photos-badge { background: linear-gradient(135deg, #8B5CF6, #7C3AED); color: white; }
-
-/* Force font consistency on ALL possible Streamlit elements */
-[data-testid="stSidebar"] *, 
-[data-testid="column"] *,
-[data-testid="stVerticalBlock"] *,
-[data-testid="stHorizontalBlock"] *,
-[data-testid="stMetric"] *,
-[data-testid="stText"] *,
-[data-testid="stMarkdown"] *,
-[data-testid="baseButton-secondary"] *,
-[data-testid="baseButton-primary"] *,
-[data-baseweb="tab"] *,
-[data-baseweb="tab-list"] *,
-[data-baseweb="input"] *,
-[data-baseweb="select"] *,
-[data-baseweb="checkbox"] *,
-[data-baseweb="textarea"] *,
-.stApp header,
-.stApp footer,
-.element-container,
-.css-1kyxreq,
-.main .block-container,
-.streamlit-expanderHeader,
-.stAlert * {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-}
-
-/* Ensure plotly charts have consistent fonts */
-.js-plotly-plot *,
-.plotly-graph-div *,
-.svg-container * {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-}
-
-/* Apply the font to ALL components that might not be covered */
-body * {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif !important;
-}
-</style>
-"""), unsafe_allow_html=True)
-
-st_html(dedent("""
-    <div style="
-        background: #fff;
-        border-radius: 20px;
-        margin: 2rem 0 2.5rem 0;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.07);
-        padding: 2.5rem 1.5rem 2rem 1.5rem;
-        text-align: center;
-        max-width: 700px;
-        margin-left: auto;
-        margin-right: auto;
-        border: 1px solid #ececec;
-    ">
-        <h1 style="
-            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-            font-weight: 700;
-            font-size: 2.2rem;
-            margin-bottom: 0.5rem;
-            color: #222;
-            letter-spacing: -0.01em;
-        ">📰 Social & News Monitor</h1>
-        <p style="
-            font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-            font-size: 1.1rem;
-            color: #444;
-            margin-bottom: 1.5rem;
-            opacity: 0.85;
-        ">
-            Effortlessly track topics across news and social media, with AI-powered insights.
-        </p>
-        <div style="
-            display: flex;
-            justify-content: center;
-            gap: 1.5rem;
-            flex-wrap: wrap;
-            margin-bottom: 0.5rem;
-        ">
-            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #007AFF;">
-                📰 <span style="font-size: 0.98rem; color: #444;">News</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #FF4500;">
-                👽 <span style="font-size: 0.98rem; color: #444;">Reddit</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #E4405F;">
-                📷 <span style="font-size: 0.98rem; color: #444;">Instagram</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #1877F2;">
-                📘 <span style="font-size: 0.98rem; color: #444;">Facebook</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.4rem; font-size: 1.05rem; color: #FF0000;">
-                📺 <span style="font-size: 0.98rem; color: #444;">YouTube</span>
-            </div>
-        </div>
-    </div>
-    """),
-    height=180
+# Simple global styling for a Google-like look
+st.markdown(
+    """
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+    * { font-family: 'Roboto', sans-serif; }
+    .badge { background-color: #e8eaed; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; }
+    .card { border: 1px solid #dadce0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; background: #fff; }
+    .card-header { display: flex; justify-content: space-between; color: #5f6368; font-size: 0.8rem; margin-bottom: 0.5rem; }
+    .card h3 { margin: 0; font-size: 1.1rem; }
+    .card h3 a { color: #1a0dab; text-decoration: none; }
+    .card h3 a:hover { text-decoration: underline; }
+    .card img.thumb { width: 100%; border-radius: 4px; margin-top: 0.5rem; }
+    .card p { color: #3c4043; margin-top: 0.5rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
+
+st.title("📰 Social & News Monitor")
+st.write("Effortlessly track topics across news and social media, with AI-powered insights.")
+
 
 if not ENV_LOADED:
     st.sidebar.info(
