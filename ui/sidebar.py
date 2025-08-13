@@ -145,15 +145,51 @@ def render_manage_topics_section():
             
             if remove_choice != "None":
                 st.warning(f"⚠️ You are about to delete '{remove_choice}' and ALL its data!")
-                col1, col2 = st.columns(2)
+                st.error("⚠️ **This action cannot be undone!**")
                 
-                with col1:
-                    if st.button("❌ **Cancel**", use_container_width=True):
-                        st.rerun()
-                
-                with col2:
-                    if st.button("🗑️ **DELETE**", type="primary", use_container_width=True):
-                        delete_topic(remove_choice)
+                # Simple confirmation with immediate deletion
+                confirm_key = f"confirm_delete_{remove_choice}_{hash(remove_choice)}"
+                if st.checkbox("✅ I understand this will permanently delete all data", key=confirm_key):
+                    if st.button("🗑️ **DELETE FOREVER**", type="primary", use_container_width=True, 
+                               help="This will immediately delete the topic and all its posts"):
+                        # Direct deletion without additional confirmation
+                        session_del = SessionLocal()
+                        try:
+                            to_del = session_del.query(Topic).filter_by(name=remove_choice).first()
+                            if to_del:
+                                deleted_topic_id = to_del.id
+                                
+                                # Count and delete associated posts
+                                posts_count = session_del.query(Post).filter_by(topic_id=to_del.id).count()
+                                session_del.query(Post).filter_by(topic_id=to_del.id).delete()
+                                
+                                # Delete the topic
+                                session_del.delete(to_del)
+                                session_del.commit()
+                                
+                                # If the deleted topic was currently selected, reset to home screen
+                                if (hasattr(st.session_state, 'selected_topic') and 
+                                    st.session_state.selected_topic == deleted_topic_id):
+                                    st.session_state.selected_topic = None
+                                
+                                # Clear any related session states
+                                keys_to_delete = [key for key in list(st.session_state.keys()) 
+                                                if remove_choice in key and 'confirm_delete' in key]
+                                for key in keys_to_delete:
+                                    del st.session_state[key]
+                                
+                                st.success(f"✅ Deleted '{remove_choice}' and {posts_count} posts!")
+                                st.info("🏠 Returning to home screen...")
+                                st.rerun()
+                            else:
+                                st.error("❌ Topic not found!")
+                        except Exception as e:
+                            st.error(f"❌ Error deleting topic: {str(e)}")
+                            session_del.rollback()
+                        finally:
+                            session_del.close()
+                else:
+                    st.info("👆 Check the box above to enable deletion")
         else:
             st.info("No topics to manage yet")
 
@@ -285,39 +321,6 @@ def create_new_topic(name, icon, color, keywords, profiles):
         st.sidebar.error("⚠️ Topic already exists!")
     
     session.close()
-
-
-def delete_topic(topic_name):
-    """Delete a topic and all its data."""
-    # Use session state to track deletion confirmation
-    if f"confirm_delete_{topic_name}" not in st.session_state:
-        st.session_state[f"confirm_delete_{topic_name}"] = True
-        st.warning("⚠️ Click DELETE again to confirm!")
-        st.rerun()
-    else:
-        session = SessionLocal()
-        
-        # Actually delete the topic
-        to_del = session.query(Topic).filter_by(name=topic_name).first()
-        if to_del:
-            # Delete associated posts first (CASCADE)
-            posts_to_delete = session.query(Post).filter_by(topic_id=to_del.id).all()
-            for post in posts_to_delete:
-                session.delete(post)
-            
-            # Delete the topic
-            session.delete(to_del)
-            session.commit()
-            
-            # Clear confirmation state
-            del st.session_state[f"confirm_delete_{topic_name}"]
-            
-            st.sidebar.success(f"✅ Topic '{topic_name}' deleted!")
-            st.rerun()
-        else:
-            st.sidebar.error("❌ Topic not found!")
-        
-        session.close()
 
 
 def collect_all_topics():
