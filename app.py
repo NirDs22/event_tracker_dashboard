@@ -88,8 +88,15 @@ def main():
         # Render overview page
         render_overview_page(topics, session, Post)
     else:
-        # Render topic detail page
-        render_topic_detail_page(session, st.session_state.selected_topic)
+        # Get the selected topic object
+        topic = session.get(Topic, st.session_state.selected_topic)
+        if not topic:
+            st.error("Topic not found!")
+            st.session_state.selected_topic = None
+            st.rerun()
+        else:
+            # Render topic detail page
+            render_topic_detail_page(topic, session, Post)
     
     session.close()
 
