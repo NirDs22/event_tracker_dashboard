@@ -43,3 +43,23 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Backup and temporary files
+*.backup
+*.bak
+*.tmp
+*~
+app_original_backup.py
+app_refactored.py
+
+# Development requirements files (keep only requirements.txt)
+requirements.local.txt
+requirements.updated.txt
+requirements.*.txt
+!requirements.txt
+
+# Development and cleanup scripts
+clean_database.py
+
+# README duplicates
+README.*.new
