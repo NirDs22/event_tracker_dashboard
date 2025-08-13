@@ -480,21 +480,27 @@ def render_analytics_tab(df, topic=None):
         })
     
     # Time window selector
-    col1, col2 = st.columns([3, 1])
-    with col2:
+    col1, col2 = st.columns([2, 2])
+    with col1:
         time_window = st.selectbox(
             "📅 Analysis Period",
             [7, 14, 30],
             format_func=lambda x: f"Last {x} days",
             index=0
         )
+    with col2:
+        max_terms = st.selectbox(
+            "📝 Terms to Show",
+            [3, 5, 8],
+            format_func=lambda x: f"Top {x}",
+            index=1  # Default to 5
+        )
     
-    with col1:
-        st.markdown("### 🔥 Trending Keywords & Hashtags")
+    st.markdown("### 🔥 Trending Keywords & Hashtags")
     
     # Create trending keywords chart
     try:
-        create_trending_keywords_chart(posts_data, topic.color if topic else "#007AFF", time_window)
+        create_trending_keywords_chart(posts_data, topic.color if topic else "#007AFF", time_window, max_terms)
     except Exception as e:
         st.warning(f"⚠️ Could not analyze keywords: {e}")
         st.info("💡 This might be due to missing text analysis libraries. Install nltk for better keyword extraction.")
