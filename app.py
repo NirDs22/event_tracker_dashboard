@@ -1,8 +1,6 @@
 import app_config  # must be first
 
 import os
-import re
-from pathlib import Path
 from datetime import datetime, timedelta
 
 # Determine if we're running in Streamlit Cloud for compatibility adjustments
@@ -27,59 +25,7 @@ if hasattr(st, 'update_page_config'):
         }
     )
 
-# --- diagnostics (toggleable) ---
-import os, sys, json
-import pandas as pd
-import plotly
-import numpy as np
 
-if "show_diagnostics" not in st.session_state:
-    st.session_state["show_diagnostics"] = False
-
-if st.sidebar.checkbox("Show diagnostics", value=st.session_state["show_diagnostics"], key="diag_cb"):
-    st.session_state["show_diagnostics"] = True
-    
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Runtime Info:**")
-    
-    st.sidebar.info(f"Python: {sys.version}")
-    st.sidebar.info(f"Streamlit: {st.__version__}")
-    st.sidebar.info(f"pandas: {pd.__version__}")
-    st.sidebar.info(f"plotly: {plotly.__version__}")
-    st.sidebar.info(f"numpy: {np.__version__}")
-    
-    # environment variables
-    if st.sidebar.checkbox("Show ENV"):
-        env_vars = dict(os.environ)
-        st.sidebar.json(env_vars)
-
-    # Show more detailed environment information if requested
-    if IS_CLOUD:
-        with st.sidebar.expander("Environment & Package Info", expanded=True):
-            st.write("**Running in Streamlit Cloud**")
-            
-            # Show key environment variables relevant to deployment
-            cloud_env_vars = {}
-            for key in ['STREAMLIT_SHARING_MODE', 'STREAMLIT_SERVER_HEADLESS', 'PATH', 'PWD']:
-                if key in os.environ:
-                    cloud_env_vars[key] = os.environ[key]
-            
-            st.json(cloud_env_vars)
-            
-            # Show current working directory and files
-            st.write("**Current Directory:**", os.getcwd())
-            
-            try:
-                files = list(Path(".").iterdir())
-                st.write("**Files in current directory:**")
-                for f in files[:10]:  # Limit to first 10 files
-                    st.write(f"- {f.name}")
-                if len(files) > 10:
-                    st.write(f"... and {len(files) - 10} more files")
-            except Exception as e:
-                st.write(f"Error listing files: {e}")
-else:
-    st.session_state["show_diagnostics"] = False
 
 from monitoring.database import SessionLocal, Topic, Post, init_db
 from monitoring.scheduler import start_scheduler
