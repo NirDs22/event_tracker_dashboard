@@ -26,9 +26,41 @@ SOURCE_ICONS = {
 }
 
 
-def create_time_series_chart(df: pd.DataFrame, topic_color: str, title: str = "📅 Mentions Over Time") -> None:
-    """Create a time series chart showing mentions over time."""
-    daily = df.groupby("date").size().reset_index(name="mentions")
+def filter_last_3_months(df: pd.DataFrame) -> pd.DataFrame:
+    """Filter DataFrame to show only data from the last 3 months."""
+    if df.empty:
+        return df
+    
+    # Get the cutoff date (3 months ago)
+    cutoff_date = datetime.now() - timedelta(days=90)
+    
+    # Convert date column to datetime if it's not already
+    if 'date' in df.columns:
+        if df['date'].dtype == 'object':
+            df = df.copy()
+            df['date'] = pd.to_datetime(df['date'])
+        # Filter to last 3 months
+        df = df[df['date'] >= cutoff_date]
+    elif 'posted_at' in df.columns:
+        if df['posted_at'].dtype == 'object':
+            df = df.copy()
+            df['posted_at'] = pd.to_datetime(df['posted_at'])
+        # Filter to last 3 months
+        df = df[df['posted_at'] >= cutoff_date]
+    
+    return df
+
+
+def create_time_series_chart(df: pd.DataFrame, topic_color: str, title: str = "📅 Mentions Over Time (Last 3 Months)") -> None:
+    """Create a time series chart showing mentions over time (last 3 months only)."""
+    # Filter to last 3 months
+    df_filtered = filter_last_3_months(df)
+    
+    if df_filtered.empty:
+        st.info("📅 No data available in the last 3 months")
+        return
+    
+    daily = df_filtered.groupby("date").size().reset_index(name="mentions")
     
     fig = px.line(
         daily, 
@@ -56,9 +88,16 @@ def create_time_series_chart(df: pd.DataFrame, topic_color: str, title: str = "�
     st.plotly_chart(fig, use_container_width=True)
 
 
-def create_source_distribution_chart(df: pd.DataFrame, title: str = "📊 Posts by Source") -> None:
-    """Create a pie chart showing post distribution by source."""
-    source_dist = df.groupby("source").size().reset_index(name="count")
+def create_source_distribution_chart(df: pd.DataFrame, title: str = "📊 Posts by Source (Last 3 Months)") -> None:
+    """Create a pie chart showing post distribution by source (last 3 months only)."""
+    # Filter to last 3 months
+    df_filtered = filter_last_3_months(df)
+    
+    if df_filtered.empty:
+        st.info("📊 No data available in the last 3 months")
+        return
+    
+    source_dist = df_filtered.groupby("source").size().reset_index(name="count")
     source_dist["icon"] = source_dist["source"].map(SOURCE_ICONS)
     source_dist["display"] = source_dist["icon"] + " " + source_dist["source"].str.title()
     
@@ -88,8 +127,35 @@ def create_source_distribution_chart(df: pd.DataFrame, title: str = "📊 Posts 
 
 
 def create_mini_analytics_chart(posts: list, topic_color: str) -> None:
-    """Create a mini analytics chart for topic overview."""
+    """Create a mini analytics chart for topic overview (last 3 months only)."""
     df_mini = pd.DataFrame([{"posted_at": p.posted_at} for p in posts])
+    
+    # Filter to last 3 months
+    cutoff_date = datetime.now() - timedelta(days=90)
+    df_mini = df_mini[df_mini["posted_at"] >= cutoff_date]
+    
+    if df_mini.empty:
+        # Show empty chart if no data in last 3 months
+        fig_mini = go.Figure()
+        fig_mini.add_annotation(
+            text="No data (3mo)",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(size=10, color="#6B7280")
+        )
+        fig_mini.update_layout(
+            height=80,
+            margin=dict(l=0, r=0, t=0, b=0),
+            showlegend=False,
+            xaxis=dict(showgrid=False, showticklabels=False, title="", visible=False),
+            yaxis=dict(showgrid=False, showticklabels=False, title="", visible=False),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_mini, use_container_width=True)
+        return
+    
     df_mini["date"] = df_mini["posted_at"].dt.date
     daily_mini = df_mini.groupby("date").size()
     
@@ -153,9 +219,26 @@ def create_source_badges(posts: list) -> str:
 
 
 def extract_keywords_and_hashtags(posts_data, min_length=3, max_keywords=20):
-    """Extract trending keywords and hashtags from posts."""
+    """Extract trending keywords and hashtags from posts (last 3 months only)."""
     import nltk
     from collections import defaultdict
+    
+    # Filter posts to last 3 months
+    cutoff_date = datetime.now() - timedelta(days=90)
+    filtered_posts = []
+    for post in posts_data:
+        post_date = post.get('posted_at')
+        if post_date:
+            if isinstance(post_date, str):
+                try:
+                    post_date = pd.to_datetime(post_date)
+                except:
+                    continue
+            if post_date.date() >= cutoff_date.date():
+                filtered_posts.append(post)
+    
+    if not filtered_posts:
+        return {}, {}
     
     # Download required NLTK data
     try:
@@ -186,7 +269,7 @@ def extract_keywords_and_hashtags(posts_data, min_length=3, max_keywords=20):
     keywords_by_date = defaultdict(Counter)
     hashtags_by_date = defaultdict(Counter)
     
-    for post in posts_data:
+    for post in filtered_posts:
         if not post.get('content'):
             continue
             
@@ -223,7 +306,7 @@ def extract_keywords_and_hashtags(posts_data, min_length=3, max_keywords=20):
 
 
 def create_trending_keywords_chart(posts_data, topic_color, time_window_days=7, max_keywords=5):
-    """Create a simplified trending keywords chart showing only top keywords."""
+    """Create a simplified trending keywords chart showing only top keywords (last 3 months only)."""
     if not posts_data:
         st.info("📝 No data available for trending analysis")
         return
@@ -231,7 +314,7 @@ def create_trending_keywords_chart(posts_data, topic_color, time_window_days=7, 
     keywords_by_date, hashtags_by_date = extract_keywords_and_hashtags(posts_data, max_keywords=max_keywords*3)
     
     if not keywords_by_date and not hashtags_by_date:
-        st.info("📝 No keywords or hashtags found in the data")
+        st.info("📝 No keywords or hashtags found in the last 3 months")
         return
     
     # Get top keywords overall (reduced number)

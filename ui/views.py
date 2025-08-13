@@ -496,7 +496,7 @@ def render_analytics_tab(df, topic=None):
             index=1  # Default to 5
         )
     
-    st.markdown("### 🔥 Trending Keywords & Hashtags")
+    st.markdown("### 🔥 Trending Keywords & Hashtags (Last 3 Months)")
     
     # Create trending keywords chart
     try:
