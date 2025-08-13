@@ -132,15 +132,15 @@ def render_overview_page(topics, session, Post):
                 else:
                     st_html(dedent("""
                     <div style="
-                        background: linear-gradient(135deg, #8E8E93, #6D6D70); 
-                        color: white; 
+                        background: linear-gradient(135deg, #E5E5EA, #D1D1D6); 
+                        color: #3A3A3C; 
                         padding: 0.75rem; 
                         border-radius: 12px; 
                         text-align: center; 
                         margin: 0.5rem 0;
                         font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
                         font-weight: 600;
-                        box-shadow: 0 4px 15px rgba(142, 142, 147, 0.2);
+                        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
                     ">
                         📭 No new posts
                     </div>
