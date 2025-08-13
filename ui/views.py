@@ -8,7 +8,7 @@ from textwrap import dedent
 from streamlit.components.v1 import html as st_html
 
 from .layout import render_welcome_screen, render_metrics_summary, render_topic_header
-from .charts import create_time_series_chart, create_source_distribution_chart, create_mini_analytics_chart, create_word_cloud, create_source_badges
+from .charts import create_time_series_chart, create_source_distribution_chart, create_mini_analytics_chart, create_word_cloud, create_source_badges, create_trending_keywords_chart, create_keyword_momentum_chart
 from .cards import render_news_card, render_reddit_card, render_facebook_card, render_youtube_card, render_instagram_card, render_card
 from .utils import time_ago, clean_content, _first
 from monitoring.summarizer import summarize, strip_think
@@ -262,7 +262,7 @@ def render_topic_detail_page(topic, session, Post):
 def render_posts_tabs(df, topic):
     """Render the tabbed interface for different post types."""
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "🕒 Recent", "📰 News", "🐦 Reddit", "📷 Instagram", "📘 Facebook", "📺 YouTube", "🖼️ Photos", "🐦 Tweets", "🤖 AI Summary"
+        "🕒 Recent", "📰 News", "🐦 Reddit", "📷 Instagram", "📘 Facebook", "📺 YouTube", "🖼️ Photos", "🐦 Tweets", "📊 Analytics"
     ])
     
     with tab1:
@@ -290,7 +290,7 @@ def render_posts_tabs(df, topic):
         render_tweets_tab(df)
     
     with tab9:
-        render_ai_summary_tab(df, topic)
+        render_analytics_tab(df, topic)
 
 
 def render_recent_posts_tab(df, topic):
@@ -457,12 +457,59 @@ def render_tweets_tab(df):
         st.info("No tweets found for this topic.")
 
 
-def render_ai_summary_tab(df, topic=None):
-    """Render the AI Summary tab."""
-    st.markdown('<h3 class="section-heading">🤖 AI-Generated Summary</h3>', unsafe_allow_html=True)
+def render_analytics_tab(df, topic=None):
+    """Render the Analytics tab with trending keywords and AI summary."""
+    st.markdown('<h3 class="section-heading">📊 Analytics & Insights</h3>', unsafe_allow_html=True)
     
-    # Use regular posts for AI summary, not photos
+    # Use regular posts for analysis, not photos
     analytics_df = df[df["source"] != "photos"]
+    
+    if len(analytics_df) == 0:
+        st.info("📭 No data available for analytics")
+        return
+    
+    # Convert DataFrame to list of dictionaries for trending analysis
+    posts_data = []
+    for _, row in analytics_df.iterrows():
+        posts_data.append({
+            'content': row.get('content', ''),
+            'posted_at': pd.to_datetime(row['posted_at']) if row.get('posted_at') else datetime.now(),
+            'source': row.get('source', ''),
+            'url': row.get('url', ''),
+            'likes': row.get('likes', 0)
+        })
+    
+    # Time window selector
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        time_window = st.selectbox(
+            "📅 Analysis Period",
+            [7, 14, 30],
+            format_func=lambda x: f"Last {x} days",
+            index=0
+        )
+    
+    with col1:
+        st.markdown("### 🔥 Trending Keywords & Hashtags")
+    
+    # Create trending keywords chart
+    try:
+        create_trending_keywords_chart(posts_data, topic.color if topic else "#007AFF", time_window)
+    except Exception as e:
+        st.warning(f"⚠️ Could not analyze keywords: {e}")
+        st.info("💡 This might be due to missing text analysis libraries. Install nltk for better keyword extraction.")
+    
+    # Keyword momentum chart
+    st.markdown("---")
+    st.markdown("### 🚀 Keyword Momentum")
+    try:
+        create_keyword_momentum_chart(posts_data, topic.color if topic else "#007AFF")
+    except Exception as e:
+        st.warning(f"⚠️ Could not create momentum chart: {e}")
+    
+    # AI Summary section
+    st.markdown("---")
+    st.markdown("### 🤖 AI-Generated Summary")
     
     with st.spinner("Generating AI summary..."):
         try:
