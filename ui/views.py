@@ -129,6 +129,22 @@ def render_overview_page(topics, session, Post):
                         🔔 {new_posts_count} new posts!
                     </div>
                     """), height=60)
+                else:
+                    st_html(dedent("""
+                    <div style="
+                        background: linear-gradient(135deg, #8E8E93, #6D6D70); 
+                        color: white; 
+                        padding: 0.75rem; 
+                        border-radius: 12px; 
+                        text-align: center; 
+                        margin: 0.5rem 0;
+                        font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                        font-weight: 600;
+                        box-shadow: 0 4px 15px rgba(142, 142, 147, 0.2);
+                    ">
+                        📭 No new posts
+                    </div>
+                    """), height=60)
             else:
                 st.info("No posts collected yet")
             
