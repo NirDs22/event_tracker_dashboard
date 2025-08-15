@@ -1,17 +1,15 @@
 
-"""Email notification utilities using Brevo (Sendinblue) API."""
+"""Email notification utilities using Gmail SMTP with Brevo fallback."""
 import os
 import logging
 from datetime import datetime
-import sib_api_v3_sdk
-from sib_api_v3_sdk.rest import ApiException
 from monitoring.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
 def send_email(to_email: str, subject: str, body: str, body_type: str = 'html') -> bool:
     """
-    Send an email using the Brevo transactional email API.
+    Send an email using Gmail SMTP with Brevo fallback.
     Args:
         to_email: Recipient email address
         subject: Email subject line
@@ -20,14 +18,8 @@ def send_email(to_email: str, subject: str, body: str, body_type: str = 'html') 
     Returns:
         True if email sent successfully, False only for real errors
     """
-    api_key = get_secret('BREVO_API')
-    from_email = get_secret('BREVO_FROM') or 'noreply@yourdomain.com'
-    from_name = get_secret('BREVO_FROM_NAME') or 'Dashboard'
-    if not api_key or not to_email:
-        logger.error('Missing BREVO_API key or recipient email')
-        print('[DEBUG] Missing BREVO_API key or recipient email')
-        return False
-
+    from monitoring.email_sender import send_email as send_email_new
+    
     # --- Prevent sending if last email was sent less than 1 hour ago ---
     import time
     import pathlib
@@ -43,63 +35,70 @@ def send_email(to_email: str, subject: str, body: str, body_type: str = 'html') 
         logger.warning("Digest email was sent less than an hour ago. Aborting send.")
         print("[DEBUG] Digest email was sent less than an hour ago. Aborting send.")
         return False
-
-    try:
-        configuration = sib_api_v3_sdk.Configuration()
-        configuration.api_key['api-key'] = api_key
-        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
-        # Set subject to Tracker Dashboard - Daily Digest (date)
-        today_str = datetime.now().strftime('%B %d, %Y')
-        subject_final = f"Tracker Dashboard - Daily Digest ({today_str})"
-        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-            to=[{"email": to_email}],
-            sender={"name": from_name, "email": from_email},
-            subject=subject_final,
-            html_content=body if body_type == 'html' else None,
-            text_content=body if body_type != 'html' else None
-        )
-        response = api_instance.send_transac_email(send_smtp_email)
+    
+    # Set subject to Tracker Dashboard - Daily Digest (date)
+    today_str = datetime.now().strftime('%B %d, %Y')
+    subject_final = f"Tracker Dashboard - Daily Digest ({today_str})"
+    
+    # Prepare content based on type
+    html_content = body if body_type == 'html' else None
+    text_content = body if body_type != 'html' else None
+    
+    # Use the new Gmail SMTP + Brevo fallback system
+    success = send_email_new(
+        to_emails=[to_email], 
+        subject=subject_final,
+        html_content=html_content or body,
+        text_content=text_content,
+        from_name="Dashboard"
+    )
+    
+    if success:
+        # Write the last sent timestamp
+        try:
+            last_sent_file.write_text(str(now_ts))
+        except Exception as e:
+            logger.warning(f"Could not write last sent timestamp: {e}")
         
-        # Log the full response to help with debugging
-        logger.info(f"Brevo API response: {response}")
-        print(f"[DEBUG] Full Brevo API response: {response}")
-        
-        # Consider any 2xx response as success, including those without messageId
-        if hasattr(response, 'messageId') or (isinstance(response, dict) and response.get('messageId')):
-            logger.info(f"Email sent successfully to {to_email} via Brevo (with messageId)")
-            # Write the last sent timestamp
-            try:
-                last_sent_file.write_text(str(now_ts))
-            except Exception as e:
-                logger.warning(f"Could not write last sent timestamp: {e}")
-            return True
-        else:
-            # Still consider it a success if we got a response without errors
-            logger.info(f"Email potentially sent to {to_email} via Brevo (no messageId in response)")
-            try:
-                last_sent_file.write_text(str(now_ts))
-            except Exception as e:
-                logger.warning(f"Could not write last sent timestamp: {e}")
-            return True
-    except ApiException as e:
-        # Check if it's actually a successful status code (2xx)
-        if hasattr(e, 'status') and 200 <= e.status < 300:
-            logger.info(f"Email sent with 2xx status code: {e.status} to {to_email}")
-            print(f"[DEBUG] Email sent with 2xx status code: {e.status}")
-            try:
-                last_sent_file.write_text(str(now_ts))
-            except Exception as err:
-                logger.warning(f"Could not write last sent timestamp: {err}")
-            return True
-        else:
-            logger.error(f"Brevo API exception: {e}")
-            print(f"[DEBUG] Brevo API exception: {e}")
-            return False
-    except Exception as exc:
-        logger.error(f"Brevo email sending failed: {exc}")
-        import traceback
-        print(f"[DEBUG] Exception: {exc}\n{traceback.format_exc()}")
+        logger.info(f"Email sent successfully to {to_email}")
+        print(f"[DEBUG] Email sent successfully to {to_email}")
+        return True
+    else:
+        logger.error(f"Failed to send email to {to_email}")
+        print(f"[DEBUG] Failed to send email to {to_email}")
         return False
+
+
+def send_otp_email(to_email: str, code: str) -> bool:
+    """
+    Send an OTP code email using Gmail SMTP with Brevo fallback.
+    Args:
+        to_email: Recipient email address
+        code: 6-digit OTP code
+    Returns:
+        True if email sent successfully, False otherwise
+    """
+    from monitoring.email_sender import send_otp_email as send_otp_via_email
+    
+    print(f"DEBUG: send_otp_email called with to_email='{to_email}', code='{code}'")
+    
+    # Clean and validate email
+    to_email = str(to_email).strip().lower()
+    if '@' not in to_email or '.' not in to_email:
+        logger.error(f'Invalid email format for OTP: "{to_email}"')
+        return False
+    
+    logger.info(f'Attempting to send OTP to: "{to_email}" with code: "{code}"')
+    
+    # Use the new Gmail SMTP + Brevo fallback system
+    success = send_otp_via_email(to_email, code)
+    
+    if success:
+        logger.info(f"OTP email sent successfully to {to_email}")
+    else:
+        logger.error(f"Failed to send OTP email to {to_email}")
+    
+    return success
 
 
 def create_digest_html(topic_name: str, posts: list, summary: str) -> str:

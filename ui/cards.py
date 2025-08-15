@@ -311,7 +311,7 @@ def render_card(title, summary, image_url, age_text, link, badge="News", topic_n
                 border-radius: 16px;
                 box-shadow: 0 4px 20px var(--apple-shadow);
                 border: 1px solid var(--apple-border);
-                overflow: hidden;
+                overflow: visible;
                 transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
                 height: auto;
                 min-height: 200px;
@@ -393,7 +393,7 @@ def render_card(title, summary, image_url, age_text, link, badge="News", topic_n
             .image-container {{
                 margin: 14px 0 18px 0;
                 border-radius: 16px;
-                overflow: hidden;
+                overflow: visible;
                 background: var(--apple-gray-light);
                 box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
             }}

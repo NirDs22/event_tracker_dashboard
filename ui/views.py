@@ -14,34 +14,49 @@ from .utils import time_ago, clean_content, _first
 from monitoring.summarizer import summarize, strip_think
 
 
-def render_overview_page(topics, session, Post):
-    """Render the main overview page with topic cards and metrics."""
-    if not topics:
+def render_overview_page(topics, session, Post, current_user_id: int):
+    """Render the main overview page with topic cards."""
+    # Filter topics by current user
+    user_topics = [t for t in topics if t.user_id == current_user_id]
+    
+    # Only show welcome screen for new users without topics
+    if not user_topics:
         render_welcome_screen()
+        st.markdown("""
+        <div style="text-align: center; padding: 3rem 1rem;">
+            <h2 style="color: #666;">🎯 Ready to start tracking?</h2>
+            <p style="font-size: 1.1rem; color: #888; margin: 1rem 0 2rem 0;">
+                Create your first topic to begin monitoring news and social media
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
         return
-
-    # Render metrics summary
-    render_metrics_summary(topics, session, Post)
+    
+    # Render topics grid
+    render_metrics_summary(user_topics, session, Post)
     
     st.markdown("---")
     
-    # Topic cards in responsive grid layout
-    cols = st.columns(min(len(topics), 3))
-    for idx, topic in enumerate(topics):
-        with cols[idx % 3]:
-            posts = (
-                session.query(Post)
-                .filter_by(topic_id=topic.id)
-                .order_by(Post.posted_at.desc())
-                .all()
-            )
-            
-            new_posts_count = 0
-            if topic.last_viewed and posts:
-                new_posts_count = sum(1 for p in posts if p.posted_at > topic.last_viewed)
-            
-            # Enhanced Apple-style topic card
-            st_html(dedent(f"""
+    # Topic cards in responsive grid layout - always create 3 columns for proper sizing
+    if user_topics:
+        cols = st.columns(3)  # Always create 3 columns for consistent card sizing
+        for idx, topic in enumerate(user_topics):
+            # Use modulo to wrap to next row after 3 cards
+            col_idx = idx % 3
+            with cols[col_idx]:
+                posts = (
+                    session.query(Post)
+                    .filter_by(topic_id=topic.id)
+                    .order_by(Post.posted_at.desc())
+                    .all()
+                )
+                
+                new_posts_count = 0
+                if topic.last_viewed and posts:
+                    new_posts_count = sum(1 for p in posts if p.posted_at > topic.last_viewed)
+                
+                # Enhanced Apple-style topic card
+                st_html(dedent(f"""
             <div style="
                 background: #FFFFFF;
                 border-radius: 20px;
@@ -51,7 +66,7 @@ def render_overview_page(topics, session, Post):
                 transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
                 border: 1px solid #E5E5EA;
                 position: relative;
-                overflow: hidden;
+                overflow: visible;
             ">
                 <div style="
                     position: absolute;
@@ -72,7 +87,7 @@ def render_overview_page(topics, session, Post):
                             font-weight: 600;
                             font-size: 1.25rem;
                             letter-spacing: -0.01em;
-                        ">{topic.name}</h3>
+                        ">{topic.name.title()}</h3>
                         <p style="
                             margin: 0.25rem 0 0 0; 
                             font-size: 0.9rem; 
@@ -104,54 +119,58 @@ def render_overview_page(topics, session, Post):
                 </div>
             </div>
             """), height=200)
-            
-            if posts:
-                # Mini analytics chart with consistent styling
-                create_mini_analytics_chart(posts, topic.color)
                 
-                # Source breakdown with enhanced badges
-                source_badges = create_source_badges(posts)
-                st_html(source_badges, height=50)
-                
-                if new_posts_count > 0:
-                    st_html(dedent(f"""
-                    <div style="
-                        background: linear-gradient(135deg, #34C759, #30B050); 
-                        color: white; 
-                        padding: 0.75rem; 
-                        border-radius: 12px; 
-                        text-align: center; 
-                        margin: 0.5rem 0;
-                        font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-                        font-weight: 600;
-                        box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3);
-                    ">
-                        🔔 {new_posts_count} new posts!
-                    </div>
-                    """), height=60)
+                if posts:
+                    # Mini analytics chart with consistent styling
+                    create_mini_analytics_chart(posts, topic.color)
+                    
+                    # Source breakdown with enhanced badges
+                    source_badges = create_source_badges(posts)
+                    st_html(source_badges, height=50)
+                    
+                    if new_posts_count > 0:
+                        st_html(dedent(f"""
+                        <div style="
+                            background: linear-gradient(135deg, #34C759, #30B050); 
+                            color: white; 
+                            padding: 0.75rem; 
+                            border-radius: 12px; 
+                            text-align: center; 
+                            margin: 0.5rem 0;
+                            font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                            font-weight: 600;
+                            box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3);
+                        ">
+                            🔔 {new_posts_count} new posts!
+                        </div>
+                        """), height=60)
+                    else:
+                        st_html(dedent("""
+                        <div style="
+                            background: linear-gradient(135deg, #E5E5EA, #D1D1D6); 
+                            color: #3A3A3C; 
+                            padding: 0.75rem; 
+                            border-radius: 12px; 
+                            text-align: center; 
+                            margin: 0.5rem 0;
+                            font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                            font-weight: 600;
+                            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+                        ">
+                            📭 No new posts
+                        </div>
+                        """), height=60)
                 else:
-                    st_html(dedent("""
-                    <div style="
-                        background: linear-gradient(135deg, #E5E5EA, #D1D1D6); 
-                        color: #3A3A3C; 
-                        padding: 0.75rem; 
-                        border-radius: 12px; 
-                        text-align: center; 
-                        margin: 0.5rem 0;
-                        font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
-                        font-weight: 600;
-                        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-                    ">
-                        📭 No new posts
-                    </div>
-                    """), height=60)
-            else:
-                st.info("No posts collected yet")
+                    st.info("No posts collected yet")
+                
+                # Apple-style explore button
+                if st.button("🔍 **Explore**", key=f"open_{topic.id}", use_container_width=True, type="primary"):
+                    st.session_state.selected_topic = topic.id
+                    st.rerun()
             
-            # Apple-style explore button
-            if st.button("🔍 **Explore**", key=f"open_{topic.id}", use_container_width=True, type="primary"):
-                st.session_state.selected_topic = topic.id
-                st.rerun()
+            # Create new row of columns after every 3 cards
+            if (idx + 1) % 3 == 0 and idx + 1 < len(user_topics):
+                cols = st.columns(3)
 
 
 def render_topic_detail_page(topic, session, Post):
@@ -177,7 +196,7 @@ def render_topic_detail_page(topic, session, Post):
         st_html(dedent("""
         <div style="text-align: center; padding: 3rem; background: #f8f9fa; border-radius: 15px;">
             <h3>📭 No posts collected yet</h3>
-            <p>Click "Collect All Topics Now" in the sidebar to start gathering data.</p>
+            <p>Click "Collect My Topics Now" in the sidebar to start gathering data.</p>
         </div>
         """), height=200)
         return
@@ -500,7 +519,9 @@ def render_analytics_tab(df, topic=None):
     
     # Create trending keywords chart
     try:
-        create_trending_keywords_chart(posts_data, topic.color if topic else "#007AFF", time_window, max_terms)
+        # Get color safely - SharedTopic objects don't have color attribute
+        chart_color = getattr(topic, 'color', "#007AFF") if topic else "#007AFF"
+        create_trending_keywords_chart(posts_data, chart_color, time_window, max_terms)
     except Exception as e:
         st.warning(f"⚠️ Could not analyze keywords: {e}")
         st.info("💡 This might be due to missing text analysis libraries. Install nltk for better keyword extraction.")
@@ -509,7 +530,9 @@ def render_analytics_tab(df, topic=None):
     st.markdown("---")
     st.markdown("### 🚀 Keyword Momentum")
     try:
-        create_keyword_momentum_chart(posts_data, topic.color if topic else "#007AFF")
+        # Get color safely - SharedTopic objects don't have color attribute
+        chart_color = getattr(topic, 'color', "#007AFF") if topic else "#007AFF"
+        create_keyword_momentum_chart(posts_data, chart_color)
     except Exception as e:
         st.warning(f"⚠️ Could not create momentum chart: {e}")
     
@@ -525,7 +548,8 @@ def render_analytics_tab(df, topic=None):
             summary_html_body, line_count = _to_bulleted_html(summary_text)
             computed_height = 180 + line_count * 30
             
-            border_color = topic.color if topic else "#007AFF"
+            # Get color safely - SharedTopic objects don't have color attribute
+            border_color = getattr(topic, 'color', "#007AFF") if topic else "#007AFF"
 
             st_html(dedent(f"""
             <div style="
@@ -567,7 +591,7 @@ def render_generic_card(row, topic):
     link = row.get("url", "")
     age = time_ago(row["posted_at"] if "posted_at" in row else row.get("created_at"))
     source_name = row["source"].title()
-    render_card(title, summary, image, age, link, badge=source_name, topic_name=topic.name)
+    render_card(title, summary, image, age, link, badge=source_name, topic_name=topic.name.title())
 
 
 def render_no_content_message(content_type):
