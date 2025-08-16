@@ -9,26 +9,9 @@ IS_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os
 # Import streamlit after app_config has already configured the page
 import streamlit as st
 
-# Add any additional menu items
-st._config.set_option("theme.base", "light")
-st._config.set_option("client.toolbarMode", "minimal")
-st._config.set_option("server.headless", True)
-st._config.set_option("theme.primaryColor", "#4A90E2")
-
-# Update menu items
-if hasattr(st, 'update_page_config'):
-    st.update_page_config(
-        menu_items={
-            'Get Help': None,
-            'Report a bug': None,
-            'About': "Social & News Monitor App"
-        }
-    )
-
-
-
 from monitoring.database import SessionLocal, Topic, Post, User, init_db
-from monitoring.scheduler import start_scheduler
+# Skip scheduler for cloud deployment to avoid dependency issues  
+# from monitoring.scheduler import start_scheduler
 from auth.service import ensure_user_authenticated, get_current_user, AuthResult
 from auth.views import render_auth_panel, render_user_status_widget
 from ui.layout import apply_custom_css, render_main_header
@@ -44,40 +27,15 @@ from ui.views import render_overview_page, render_topic_detail_page
 from ui.shared_views import render_shared_overview_page, render_shared_topic_detail_page
 
 def main():
-    """Main application function."""
-    # Initialize database and scheduler
+    """Main application function - simplified for cloud deployment."""
+    # Initialize database only
     init_db()
-    try:
-        scheduler = start_scheduler()
-    except Exception:
-        scheduler = None
     
     # Apply custom CSS
     apply_custom_css()
     
     # Initialize database session
     session = SessionLocal()
-    
-    # Check if we need to migrate to shared topics
-    try:
-        from monitoring.shared_topics import migrate_existing_topics_to_shared
-        from monitoring.database import SharedTopic
-        from sqlalchemy import text
-        
-        # Check if shared topics system is empty and we have legacy topics
-        shared_count = session.query(SharedTopic).count()
-        legacy_count = session.query(Topic).count()
-        
-        if shared_count == 0 and legacy_count > 0:
-            st.info("🔄 Migrating to improved shared topic system... This will only happen once.")
-            with st.spinner("Migrating data..."):
-                migrate_existing_topics_to_shared()
-            st.success("✅ Migration completed! You now have access to the shared topic system.")
-            st.rerun()
-            
-    except Exception as e:
-        # Migration is not critical, continue with app
-        print(f"Migration check failed: {e}")
     
     # Handle authentication
     auth_result = ensure_user_authenticated()
@@ -102,12 +60,6 @@ def main():
     
     # Render main header
     render_main_header()
-    
-    # Check scheduler status
-    if scheduler is None:
-        st.sidebar.info(
-            "Background scheduler did not start. Scheduled collection won't run; check logs or collect manually."
-        )
     
     # Initialize session state for shared topics
     if "selected_topic" not in st.session_state:
