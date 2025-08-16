@@ -4,7 +4,10 @@ import random
 import string
 from datetime import datetime, timedelta
 from typing import Optional, NamedTuple
-import bcrypt
+# import hashlib
+import hmac
+import secrets
+# import bcrypt  # Removed for cloud compatibility  # Removed for cloud compatibility
 from monitoring.database import SessionLocal, User, LoginCode
 from monitoring.notifier import send_otp_email
 from .cookies import get_auth_token, set_auth_token, clear_auth_token
@@ -168,13 +171,15 @@ def start_login(email: str) -> bool:
         print(f"DEBUG: Generated code: {code}")
         
         # Hash the code
-        code_hash = bcrypt.hashpw(code.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        salt = secrets.token_hex(16)
+        code_hash = hashlib.pbkdf2_hmac('sha256', code.encode('utf-8'), salt.encode('utf-8'), 100000)
+        code_hash_str = salt + ':' + code_hash.hex()
         
         # Create login code record with 10 minute expiry
         expires_at = datetime.utcnow() + timedelta(minutes=10)
         login_code = LoginCode(
             email=email.lower().strip(),
-            code_hash=code_hash,
+            code_hash=code_hash_str,
             expires_at=expires_at,
             attempts=0
         )
@@ -240,8 +245,14 @@ def _complete_login_internal(email: str, code: str, current_guest_user_id: Optio
         
         # Verify the code
         print(f"DEBUG: Verifying code '{code}' against hash")
-        if not bcrypt.checkpw(code.encode('utf-8'), login_code.code_hash.encode('utf-8')):
-            print("DEBUG: Code verification failed")
+        try:
+            salt, stored_hash = login_code.code_hash.split(':')
+            code_hash = hashlib.pbkdf2_hmac('sha256', code.encode('utf-8'), salt.encode('utf-8'), 100000)
+            if not hmac.compare_digest(code_hash.hex(), stored_hash):
+                print("DEBUG: Code verification failed")
+                return None
+        except ValueError:
+            print("DEBUG: Invalid hash format")
             return None
         
         print("DEBUG: Code verification successful")
