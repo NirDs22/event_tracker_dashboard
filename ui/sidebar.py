@@ -102,67 +102,50 @@ def render_add_topic_section(current_user_id: int):
             if not name:
                 st.error("Please enter a topic name")
             else:
-                # Check if there's an EXACT match first (not just contains)
-                from monitoring.shared_topics import find_exact_shared_topic
+                # Simply create/subscribe to topic regardless of whether it exists
+                # This is what the user wants - one button that just works!
                 from monitoring.database import SessionLocal
+                from monitoring.shared_topics import find_exact_shared_topic, subscribe_user_to_topic, get_shared_topic_stats
                 
                 session = SessionLocal()
                 try:
-                    # Look for exact match only 
+                    # Check if topic already exists
                     existing_topic = find_exact_shared_topic(session, name)
                     
                     if existing_topic:
-                        # Found exact match - show subscription option
-                        from monitoring.shared_topics import get_shared_topic_stats
-                        stats = get_shared_topic_stats(session, existing_topic.id)
+                        # Topic exists - just subscribe the user
+                        from monitoring.database import UserTopicSubscription
                         
-                        st.info(f"Found existing topic: **{name}** ({stats['posts_count']} posts, {stats['subscribers_count']} subscribers)")
-                        if st.button(f"📌 Subscribe to existing topic", key="subscribe_existing"):
-                            from monitoring.shared_topics import subscribe_user_to_topic
+                        # Check if user is already subscribed
+                        already_subscribed = session.query(UserTopicSubscription).filter_by(
+                            user_id=current_user_id,
+                            shared_topic_id=existing_topic.id
+                        ).first()
+                        
+                        if already_subscribed:
+                            st.success(f"✅ You're already subscribed to '{name}'!")
+                        else:
+                            # Subscribe to existing topic
                             subscription = subscribe_user_to_topic(
                                 session, current_user_id, existing_topic.id,
                                 display_name=name, color=color, icon=icon
                             )
                             
-                            # If topic has no posts, trigger collection
-                            if stats['posts_count'] == 0:
-                                st.info("🚀 This topic has no posts yet. Collecting data...")
-                                try:
-                                    from monitoring.collectors import collect_topic
-                                    from monitoring.database import Topic
-                                    
-                                    # Create temporary Topic object for collection
-                                    temp_topic = Topic()
-                                    temp_topic.id = existing_topic.id
-                                    temp_topic.name = existing_topic.name
-                                    temp_topic.keywords = existing_topic.keywords or ""
-                                    temp_topic.search_reddit = True
-                                    temp_topic.search_facebook = True
-                                    temp_topic.search_instagram = True
-                                    temp_topic.search_twitter = True
-                                    temp_topic.search_photos = True
-                                    temp_topic.last_collected = None
-                                    
-                                    with st.spinner(f"Collecting initial data for '{name}'..."):
-                                        errors = collect_topic(temp_topic, force=True, shared_topic_id=existing_topic.id)
-                                        if errors:
-                                            st.warning(f"Collection completed with some issues: {'; '.join(errors[:2])}")
-                                        else:
-                                            st.success(f"✅ Collected data for '{name}'!")
-                                            
-                                except Exception as e:
-                                    st.error(f"Error during collection: {str(e)}")
-                            
-                            st.success(f"✅ Subscribed to existing topic '{name}'!")
-                            st.rerun()
+                            stats = get_shared_topic_stats(session, existing_topic.id)
+                            st.success(f"✅ Subscribed to existing topic '{name}' ({stats['posts_count']} posts)!")
+                        
+                        session.close()
+                        st.rerun()
                     else:
-                        # No exact match found - create new topic
-                        st.info(f"🆕 Creating new topic: **{name}**")
+                        # Topic doesn't exist - create new one and subscribe
+                        session.close()  # Close before calling create function
                         create_new_shared_topic(name, icon, color, keywords, profiles, current_user_id)
                         st.rerun()
                         
-                finally:
+                except Exception as e:
+                    session.rollback()
                     session.close()
+                    st.error(f"❌ Error creating/subscribing to topic: {str(e)}")
 
 
 def render_test_email_section():
