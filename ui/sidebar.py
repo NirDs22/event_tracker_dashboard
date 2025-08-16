@@ -7,7 +7,7 @@ import threading
 import traceback
 from monitoring.database import SessionLocal, Topic, Post
 from monitoring.collectors import collect_topic, collect_all_topics_efficiently
-from monitoring.scheduler import send_test_digest
+# from monitoring.scheduler import send_test_digest  # Disabled for cloud
 from monitoring.secrets import get_secret
 
 
