@@ -1,27 +1,9 @@
-# Event Tracker Dashboard - Production Requirements
-# Optimized for Streamlit Cloud deployment
-
-# Core web framework
-streamlit==1.48.1
-
-# Data processing and visualization
-pandas==2.2.2
-plotly==5.24.1
-numpy==1.26.4
-wordcloud==1.9.4
-
-# Database
-sqlalchemy==2.0.34
-
-# Background task scheduling
-apscheduler==3.11.0
-
-# Data collection - web scraping and RSS
-feedparser==6.0.11
-beautifulsoup4==4.12.3
-requests==2.32.4
-
-# Authentication and security
+# Minimal essential packages for Streamlit Cloud (no version pinning)
+pandas
+plotly  
+sqlalchemy
+feedparser
+beautifulsoup4
+requests
+itsdangerous
 extra-streamlit-components
-itsdangerous==2.2.0
-bcrypt==3.2.0
