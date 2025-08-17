@@ -400,8 +400,8 @@ def fetch_twitter(topic: Topic) -> Tuple[List[dict], List[str]]:
         
         # Strategy 3: Generate realistic fallback content if still low
         if len(posts) < 3:
-            fallback_posts = generate_realistic_social_posts(query, 'twitter', 5)
-            posts.extend(fallback_posts)
+            # DISABLED: fallback_posts = generate_realistic_social_posts(query, 'twitter', 5)
+            # DISABLED: posts.extend(fallback_posts)
             errors.append("Using realistic simulated Twitter content due to API limitations")
         
         # Format all posts consistently
@@ -456,8 +456,8 @@ def fetch_facebook(topic: Topic) -> Tuple[List[dict], List[str]]:
         
         # Strategy 3: Realistic fallback content
         if len(posts) < 2:
-            fallback_posts = generate_realistic_social_posts(query, 'facebook', 4)
-            posts.extend(fallback_posts)
+            # DISABLED: fallback_posts = generate_realistic_social_posts(query, 'facebook', 4)
+            # DISABLED: posts.extend(fallback_posts)
             errors.append("Using realistic simulated Facebook content due to API limitations")
         
         # Format posts
@@ -509,8 +509,8 @@ def fetch_instagram(topic: Topic) -> Tuple[List[dict], List[str]]:
         
         # Strategy 3: Realistic fallback content
         if len(posts) < 2:
-            fallback_posts = generate_realistic_social_posts(query, 'instagram', 4)
-            posts.extend(fallback_posts)
+            # DISABLED: fallback_posts = generate_realistic_social_posts(query, 'instagram', 4)
+            # DISABLED: posts.extend(fallback_posts)
             errors.append("Using realistic simulated Instagram content due to API limitations")
         
         # Format posts
