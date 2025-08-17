@@ -577,7 +577,7 @@ def render_news_card(item):
     
     # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:900px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
     
     # Extract data from item
     title = _first(getattr(item, "title", None), item.get("title") if hasattr(item, 'get') else getattr(item, 'title', None))
@@ -610,7 +610,7 @@ def render_reddit_card(post):
     
     # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:900px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
     
     title = _first(getattr(post, "title", None), post.get("title") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "selftext", None), getattr(post, "content", None),
@@ -641,7 +641,7 @@ def render_facebook_card(post):
     
     # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:900px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
         
     title = _first(getattr(post, "title", None), getattr(post, "page_name", None),
                    post.get("title") if hasattr(post, 'get') else None,
@@ -673,7 +673,7 @@ def render_youtube_card(video):
     
     # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:900px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
         
     title = _first(getattr(video, "title", None), video.get("title") if hasattr(video, 'get') else None)
     title = title[:min(124, len(title))].rjust(124)
@@ -704,7 +704,7 @@ def render_instagram_card(post):
     
     # Create a container div for better layout in cloud with fixed width
     if IS_CLOUD:
-        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:550px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
+        st.markdown('<div class="card-container card-fixed-width" style="width:100%; max-width:900px; margin:0 auto 20px auto;">', unsafe_allow_html=True)
         
     title = _first(getattr(post, "username", None), post.get("username") if hasattr(post, 'get') else None)
     summary = _first(getattr(post, "caption", None), getattr(post, "content", None),
