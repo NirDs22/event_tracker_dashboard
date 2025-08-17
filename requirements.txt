@@ -7,3 +7,4 @@ beautifulsoup4
 requests
 itsdangerous
 extra-streamlit-components
+wordcloud
