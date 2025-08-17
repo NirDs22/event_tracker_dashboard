@@ -9,3 +9,4 @@ itsdangerous
 extra-streamlit-components
 wordcloud
 nltk
+g4f
