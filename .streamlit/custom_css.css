@@ -1,21 +1,27 @@
 /* Cloud-specific styling - Aggressive fixes with fixed dimensions */
 
 /* Force fixed width for consistent layout */
+
 .main {
-    max-width: 1440px !important;
+    max-width: 2200px !important;
+    width: 100vw !important;
     margin: 0 auto !important;
+    min-width: 0 !important;
 }
 
 /* Fixed container width for consistent card display */
 [data-testid="stAppViewContainer"] {
     max-width: 100vw !important;
-    overflow-x: hidden !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
 }
 
 /* Make sure content doesn't exceed width */
 [data-testid="stAppViewContainer"] > div:nth-child(2) > div:nth-child(1) > section {
-    max-width: 1440px !important;
+    max-width: 2200px !important;
+    width: 100vw !important;
     margin: 0 auto !important;
+    min-width: 0 !important;
 }
 
 /* Fix horizontal blocks */
@@ -24,8 +30,9 @@ div[data-testid="stHorizontalBlock"] {
     gap: 1rem !important;
     align-items: stretch !important;
     margin-bottom: 1rem !important;
-    width: 100% !important;
-    max-width: 1200px !important;
+    width: 100vw !important;
+    max-width: 2200px !important;
+    min-width: 0 !important;
 }
 
 div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
@@ -85,9 +92,11 @@ html, body, [data-testid="stAppViewContainer"] * {
 
 /* Fix block containers */
 [data-testid="block-container"] {
-    max-width: 100% !important;
-    padding-left: 1rem !important;
-    padding-right: 1rem !important;
+    max-width: 2000px !important;
+    width: 100vw !important;
+    min-width: 0 !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
 }
 
 /* Fix stacked cards */

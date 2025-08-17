@@ -77,9 +77,15 @@ def perform_rss_search(query: str, site: str = None) -> Tuple[List[dict], List[s
                             # Clean HTML from content
                             if content:
                                 try:
-                                    soup = BeautifulSoup(content, 'html.parser')
+                                    # Fix MarkupResemblesLocatorWarning: check if content is a filename
+                                    import os
+                                    if isinstance(content, str) and os.path.isfile(content):
+                                        with open(content, 'r', encoding='utf-8') as f:
+                                            soup = BeautifulSoup(f, 'html.parser')
+                                    else:
+                                        soup = BeautifulSoup(content, 'html.parser')
                                     content = soup.get_text(' ', strip=True)
-                                except:
+                                except Exception:
                                     content = re.sub(r'<[^>]+>', '', content)
                                     content = re.sub(r'\s+', ' ', content).strip()
                             

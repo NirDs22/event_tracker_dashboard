@@ -14,36 +14,52 @@ SUMMARY_MAX_LENGTH = 150
 SUMMARY_MIN_LENGTH = 40
 
 
+
+
 def summarize(texts: List[str]) -> str:
     """
     Return a concise summary of provided texts using available AI models.
-    
     Attempts to use models in order of preference:
-    1. Ollama (local AI model) - if configured
-    2. Simple text extraction - lightweight fallback
-    
-    Args:
-        texts: List of text strings to summarize
-        
-    Returns:
-        A concise summary string
+    1. g4f (try up to 3 models)
+    2. Ollama (local AI model)
+    3. Simple text extraction
     """
     if not texts:
         return "No content to summarise."
-    
-    # Join texts and limit input length
     joined = "\n".join(text.strip() for text in texts if text.strip())[:MAX_INPUT_LENGTH]
-    
     if not joined.strip():
         return "No meaningful content to summarise."
 
-    # Try Ollama first (preferred for quality)
+    # Try g4f models in order, without freezing UI
+    g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+    try:
+        import g4f
+        for model_name in g4f_models:
+            try:
+                response = g4f.ChatCompletion.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": "You are an expert summarizer. Summarize the following social media and news content in 2-3 sentences. Focus on the main topics, key events, and overall sentiment. Use bullet points for clarity and bold important phrases. Order your response with the most important points first. Be concise (medium length) and informative."},
+                        {"role": "user", "content": joined[:2000]}
+                    ]
+                )
+                summary = response.strip()
+                if summary and len(summary.split()) > 5:
+                    logger.info(f"Successfully generated summary using g4f model: {model_name}")
+                    return strip_think(summary)
+            except Exception as e:
+                logger.warning(f"g4f model {model_name} failed: {e}")
+                continue
+    except Exception as e:
+        logger.warning(f"g4f import or all models failed: {e}")
+
+    # Try Ollama next
     summary = _try_ollama_summary(joined)
     if summary:
         return summary
-    
+
     # Lightweight fallback: simple text extraction (no model downloads)
-    logger.info("Ollama not available, using simple text extraction")
+    logger.info("No AI available, using simple text extraction")
     return _simple_fallback(joined)
 
 

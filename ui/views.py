@@ -561,12 +561,15 @@ def render_analytics_tab(df, topic=None):
                 color: #1C1C1E;
                 line-height: 1.8;
                 font-size: 18px;
+                min-height: 220px;
+                max-height: 700px;
+                overflow-y: auto;
             ">
                 <div style="font-family: inherit; color: inherit;">
                     {summary_html_body}
                 </div>
             </div>
-            """), height=computed_height)
+            """), height=max(computed_height, 220))
         except Exception as e:
             st.error(f"Failed to generate summary: {e}")
 
