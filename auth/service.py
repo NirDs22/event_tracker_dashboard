@@ -4,7 +4,7 @@ import random
 import string
 from datetime import datetime, timedelta
 from typing import Optional, NamedTuple
-# import hashlib
+import hashlib
 import hmac
 import secrets
 # import bcrypt  # Removed for cloud compatibility  # Removed for cloud compatibility
