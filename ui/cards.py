@@ -597,7 +597,44 @@ def render_news_card(item):
     
     # Render the card
     render_card(title, summary, image, age, link, badge="News")
-    
+
+    # Chat with AI feature
+    # Use index from context if available for unique key
+    import inspect, uuid
+    frame = inspect.currentframe()
+    idx = None
+    try:
+        outer = frame.f_back
+        if outer and 'idx' in outer.f_locals:
+            idx = outer.f_locals['idx']
+    except Exception:
+        idx = None
+    unique_id = uuid.uuid4().hex
+    chat_key = f"chat_ai_news_{hash(str(title)+str(summary)+str(age))}_{idx if idx is not None else ''}_{unique_id}"
+    if st.button("💬 Chat with AI about this post", key=chat_key, use_container_width=True):
+        import g4f
+        prompt = f"Explain what this news post is about.\nTitle: {title}\nContent: {summary}"
+        g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+        response = None
+        error_msgs = []
+        for model_name in g4f_models:
+            with st.spinner(f"Please wait... Trying AI model: {model_name}"):
+                try:
+                    response = g4f.ChatCompletion.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": "You are an expert explainer. Explain the news post in simple terms."},
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
+                    if response and len(response.strip()) > 10:
+                        st.success(f"AI ({model_name}) says: {response.strip()}")
+                        break
+                except Exception as e:
+                    error_msgs.append(f"{model_name} failed: {e}")
+        else:
+            st.error("All AI models failed.\n" + "\n".join(error_msgs))
+
     # Close the container div
     if IS_CLOUD:
         st.markdown('</div>', unsafe_allow_html=True)
@@ -628,7 +665,43 @@ def render_reddit_card(post):
                  post.get("age_text") if hasattr(post, 'get') else None)
     
     render_card(title, summary, thumb, age, link, badge="Reddit")
-    
+
+    # Chat with AI feature
+    import inspect, uuid
+    frame = inspect.currentframe()
+    idx = None
+    try:
+        outer = frame.f_back
+        if outer and 'idx' in outer.f_locals:
+            idx = outer.f_locals['idx']
+    except Exception:
+        idx = None
+    unique_id = uuid.uuid4().hex
+    chat_key = f"chat_ai_reddit_{hash(str(title)+str(summary)+str(age))}_{idx if idx is not None else ''}_{unique_id}"
+    if st.button("💬 Chat with AI about this post", key=chat_key, use_container_width=True):
+        import g4f
+        prompt = f"Explain what this Reddit post is about.\nTitle: {title}\nContent: {summary}"
+        g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+        response = None
+        error_msgs = []
+        for model_name in g4f_models:
+            with st.spinner(f"Please wait... Trying AI model: {model_name}"):
+                try:
+                    response = g4f.ChatCompletion.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": "You are an expert explainer. Explain the Reddit post in simple terms."},
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
+                    if response and len(response.strip()) > 10:
+                        st.success(f"AI ({model_name}) says: {response.strip()}")
+                        break
+                except Exception as e:
+                    error_msgs.append(f"{model_name} failed: {e}")
+        else:
+            st.error("All AI models failed.\n" + "\n".join(error_msgs))
+
     # Close the container div
     if IS_CLOUD:
         st.markdown('</div>', unsafe_allow_html=True)

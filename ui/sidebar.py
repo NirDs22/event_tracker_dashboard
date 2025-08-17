@@ -113,15 +113,13 @@ def render_add_topic_section(current_user_id: int):
                     existing_topic = find_exact_shared_topic(session, name)
                     
                     if existing_topic:
-                        # Topic exists - just subscribe the user
-                        from monitoring.database import UserTopicSubscription
-                        
+                        # Topic exists - subscribe user if not already subscribed
+                        from monitoring.database import UserTopicSubscription, Topic
                         # Check if user is already subscribed
                         already_subscribed = session.query(UserTopicSubscription).filter_by(
                             user_id=current_user_id,
                             shared_topic_id=existing_topic.id
                         ).first()
-                        
                         if already_subscribed:
                             st.success(f"✅ You're already subscribed to '{name}'!")
                         else:
@@ -130,16 +128,31 @@ def render_add_topic_section(current_user_id: int):
                                 session, current_user_id, existing_topic.id,
                                 display_name=name, color=color, icon=icon
                             )
-                            
                             stats = get_shared_topic_stats(session, existing_topic.id)
                             st.success(f"✅ Subscribed to existing topic '{name}' ({stats['posts_count']} posts)!")
-                        
+                        # Also add to topics table for compatibility, only if not already exists for this user
+                        session2 = SessionLocal()
+                        existing_topic_row = session2.query(Topic).filter_by(name=name, user_id=current_user_id).first()
+                        if not existing_topic_row:
+                            topic_row = Topic(name=name, user_id=current_user_id, icon=icon, color=color)
+                            session2.add(topic_row)
+                            session2.commit()
+                        session2.close()
                         session.close()
                         st.rerun()
                     else:
                         # Topic doesn't exist - create new one and subscribe
                         session.close()  # Close before calling create function
                         create_new_shared_topic(name, icon, color, keywords, profiles, current_user_id)
+                        # Also add to topics table for compatibility, only if not already exists for this user
+                        from monitoring.database import SessionLocal, Topic
+                        session2 = SessionLocal()
+                        existing_topic_row = session2.query(Topic).filter_by(name=name, user_id=current_user_id).first()
+                        if not existing_topic_row:
+                            topic_row = Topic(name=name, user_id=current_user_id, icon=icon, color=color)
+                            session2.add(topic_row)
+                            session2.commit()
+                        session2.close()
                         st.rerun()
                         
                 except Exception as e:
@@ -185,11 +198,20 @@ def render_test_email_section():
 
 
 def render_manage_topics_section(current_user_id: int):
+    # Diagnostic: Show all topics in the database for debugging
+    session_diag = SessionLocal()
+    all_topics = session_diag.query(Topic).all()
+    session_diag.close()
+    if all_topics:
+        st.info(f"[DEBUG] All topics in DB: {[{'id': t.id, 'name': t.name, 'user_id': t.user_id} for t in all_topics]}")
+    else:
+        st.info("[DEBUG] No topics found in DB at all.")
     """Render the manage topics section."""
     with st.sidebar.expander("⚙️ Manage Topics", expanded=False):
         session = SessionLocal()
         topics = session.query(Topic).filter(Topic.user_id == current_user_id).all()
         topic_names = [t.name for t in topics]
+        st.info(f"[DEBUG] current_user_id: {current_user_id}, topics found: {len(topics)}")
         session.close()
         
         if topic_names:

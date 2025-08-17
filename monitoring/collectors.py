@@ -608,8 +608,12 @@ def fetch_news(topic: Topic) -> Tuple[List[dict], List[str]]:
                     summary = entry.get('summary', '')
                     if summary and summary != content:
                         try:
-                            soup = BeautifulSoup(summary, 'html.parser')
-                            summary_clean = soup.get_text(' ', strip=True)
+                            # Fix MarkupResemblesLocatorWarning: only parse as HTML if not a filename
+                            if isinstance(summary, str) and not (summary.endswith('.html') or summary.endswith('.htm') or summary.endswith('.xml') or summary.endswith('.txt')):
+                                soup = BeautifulSoup(summary, 'html.parser')
+                                summary_clean = soup.get_text(' ', strip=True)
+                            else:
+                                summary_clean = summary
                         except:
                             summary_clean = re.sub(r'<[^>]+>', '', summary)
                             summary_clean = re.sub(r'\s+', ' ', summary_clean).strip()

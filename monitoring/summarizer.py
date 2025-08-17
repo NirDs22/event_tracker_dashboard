@@ -31,26 +31,32 @@ def summarize(texts: List[str]) -> str:
         return "No meaningful content to summarise."
 
     # Try g4f models in order, without freezing UI
-    g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+    g4f_models = [ "gpt-4", "mixtral-8x7b", "gpt-3.5-turbo"]
+    import streamlit as st
     try:
         import g4f
         for model_name in g4f_models:
-            try:
-                response = g4f.ChatCompletion.create(
-                    model=model_name,
-                    messages=[
-                        {"role": "system", "content": "You are an expert summarizer. Summarize the following social media and news content in 2-3 sentences. Focus on the main topics, key events, and overall sentiment. Use bullet points for clarity and bold important phrases. Order your response with the most important points first. Be concise (medium length) and informative."},
-                        {"role": "user", "content": joined[:2000]}
-                    ]
-                )
-                summary = response.strip()
-                if summary and len(summary.split()) > 5:
-                    logger.info(f"Successfully generated summary using g4f model: {model_name}")
-                    return strip_think(summary)
-            except Exception as e:
-                logger.warning(f"g4f model {model_name} failed: {e}")
-                continue
+            with st.spinner(f"Please wait... Trying AI model: {model_name}"):
+                try:
+                    response = g4f.ChatCompletion.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": "You are an expert summarizer. Summarize the following social media and news content in 2-3 sentences. Focus on the main topics, key events, and overall sentiment. Use bullet points for clarity and bold important phrases. Order your response with the most important points first. Be concise (medium length) and informative."},
+                            {"role": "user", "content": joined[:2000]}
+                        ]
+                    )
+                    summary = response.strip()
+                    if summary and len(summary.split()) > 5:
+                        st.success(f"AI ({model_name}) summary generated.")
+                        logger.info(f"Successfully generated summary using g4f model: {model_name}")
+                        print(response)
+                        return strip_think(summary)
+                except Exception as e:
+                    st.warning(f"AI model {model_name} failed: {e}")
+                    logger.warning(f"g4f model {model_name} failed: {e}")
+                    continue
     except Exception as e:
+        st.error(f"g4f import or all models failed: {e}")
         logger.warning(f"g4f import or all models failed: {e}")
 
     # Try Ollama next

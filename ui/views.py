@@ -324,7 +324,8 @@ def render_recent_posts_tab(df, topic):
         elif s == "twitter": return 3
         return 4
     
-    recent_df["_source_order"] = recent_df["source"].apply(_source_rank)
+    # Fix SettingWithCopyWarning by using .loc
+    recent_df.loc[:, "_source_order"] = recent_df["source"].apply(_source_rank)
     recent_df = recent_df.sort_values(["_source_order", "posted_at"], ascending=[True, False])
     
     if not recent_df.empty:
