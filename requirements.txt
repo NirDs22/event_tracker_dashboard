@@ -8,3 +8,4 @@ requests
 itsdangerous
 extra-streamlit-components
 wordcloud
+nltk
