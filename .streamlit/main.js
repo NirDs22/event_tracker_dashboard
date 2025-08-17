@@ -11,7 +11,7 @@ function addFixedWidthContainers() {
     const mainContainer = document.querySelector('[data-testid="stAppViewContainer"] > div:nth-child(2)');
     if (mainContainer) {
         mainContainer.classList.add('fixed-width-container');
-        mainContainer.style.maxWidth = '1440px';
+        mainContainer.style.maxWidth = '1800px';
         mainContainer.style.margin = '0 auto';
         mainContainer.style.padding = '0';
     }

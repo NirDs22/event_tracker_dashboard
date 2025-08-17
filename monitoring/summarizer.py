@@ -19,8 +19,9 @@ def summarize(texts: List[str]) -> str:
     Return a concise summary of provided texts using available AI models.
     
     Attempts to use models in order of preference:
-    1. Ollama (local AI model) - if configured
-    2. Simple text extraction - lightweight fallback
+    1. g4f (free online AI) - first option
+    2. Ollama (local AI model) - if configured
+    3. Simple text extraction - lightweight fallback
     
     Args:
         texts: List of text strings to summarize
@@ -37,14 +38,71 @@ def summarize(texts: List[str]) -> str:
     if not joined.strip():
         return "No meaningful content to summarise."
 
-    # Try Ollama first (preferred for quality)
+    # Try g4f first (free online AI)
+    summary = _try_g4f_summary(joined)
+    if summary:
+        return summary
+    
+    # Try Ollama second (local AI model)
     summary = _try_ollama_summary(joined)
     if summary:
         return summary
     
     # Lightweight fallback: simple text extraction (no model downloads)
-    logger.info("Ollama not available, using simple text extraction")
+    logger.info("Both g4f and Ollama not available, using simple text extraction")
     return _simple_fallback(joined)
+
+
+def _try_g4f_summary(text: str) -> Optional[str]:
+    """Attempt to summarize using g4f (free online AI)."""
+    try:
+        import g4f
+        
+        # Try common models that might work without API keys
+        models_to_try = ['gpt-4o', 'gemma-2b', 'llama-3-8b', 'qwen-2.5-7b']
+        
+        prompt = (
+            "Summarize the following social media and news content in 2-3 sentences. "
+            "Focus on the main topics, key events, and overall sentiment. "
+            "Use bullet points for clarity and bold important phrases. "
+            "Order your response with the most important points first. "
+            "Be concise (medium length) and informative:\n\n" + text[:2000]  # Limit input size
+        )
+        
+        for model in models_to_try:
+            try:
+                response = g4f.ChatCompletion.create(
+                    model=model,
+                    messages=[{'role': 'user', 'content': prompt}],
+                )
+                
+                if response and isinstance(response, str) and len(response.split()) > 5:
+                    logger.info(f"Successfully generated summary using g4f model: {model}")
+                    return strip_think(response.strip())
+                    
+            except Exception as model_exc:
+                logger.debug(f"g4f model {model} failed: {model_exc}")
+                continue
+        
+        # If no specific model worked, try without specifying model
+        try:
+            response = g4f.ChatCompletion.create(
+                messages=[{'role': 'user', 'content': prompt}],
+            )
+            
+            if response and isinstance(response, str) and len(response.split()) > 5:
+                logger.info("Successfully generated summary using g4f default")
+                return strip_think(response.strip())
+                
+        except Exception as default_exc:
+            logger.debug(f"g4f default failed: {default_exc}")
+            
+    except ImportError:
+        logger.debug("g4f package not installed")
+    except Exception as exc:
+        logger.debug(f"g4f summarization failed: {exc}")
+    
+    return None
 
 
 def _try_ollama_summary(text: str) -> Optional[str]:

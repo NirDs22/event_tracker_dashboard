@@ -5,14 +5,14 @@
 
 /* Force fixed width main container for more consistent layout */
 [data-testid="stAppViewContainer"] > div:nth-child(2) > div:nth-child(1) > section {
-    max-width: 1440px !important;  /* Set max width for the entire app container */
+    max-width: 1800px !important;  /* Set max width for the entire app container */
     margin: 0 auto !important;     /* Center the container */
     padding: 0 !important;         /* Remove default padding */
 }
 
 /* Main content container fixed width */
 [data-testid="stAppViewContainer"] [data-testid="block-container"] {
-    max-width: 1200px !important;
+    max-width: 1600px !important;
     margin: 0 auto !important;
     padding-left: 2rem !important;
     padding-right: 2rem !important;

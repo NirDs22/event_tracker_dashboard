@@ -1,7 +1,7 @@
 /* Fixed width container for main content */
 .main-fixed-container {
     width: 100% !important;
-    max-width: 1200px !important;
+    max-width: 1600px !important;
     margin: 0 auto !important;
     padding: 0 !important;
     box-sizing: border-box !important;
