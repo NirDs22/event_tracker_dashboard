@@ -166,19 +166,22 @@ def render_test_email_section():
 
 
 def create_topic_with_background_collection(name: str, keywords: str, profiles: str, icon: str, color: str, user_id: int):
-    """Create a new shared topic and start background collection."""
-    # Track creation status in session state
-    if "topic_creating" not in st.session_state:
-        st.session_state.topic_creating = False
-    if "topic_creation_status" not in st.session_state:
-        st.session_state.topic_creation_status = None
+    """Create a new shared topic and start background collection with progress tracking."""
+    import time
     
-    # Set creation status
+    # Track creation status in session state
     st.session_state.topic_creating = True
     st.session_state.topic_creation_name = name
+    st.session_state.topic_creation_progress = 0
+    st.session_state.topic_creation_step = "Initializing..."
+    st.session_state.topic_creation_start_time = time.time()
     
     def create_topic_worker():
         try:
+            # Step 1: Create topic and subscription
+            st.session_state.topic_creation_step = f"📝 Creating topic '{name}'..."
+            st.session_state.topic_creation_progress = 0.1
+            
             from monitoring.shared_topics import find_or_create_shared_topic, subscribe_user_to_topic
             from monitoring.database import SessionLocal, Topic
             
@@ -186,6 +189,7 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
             
             # Find or create shared topic
             shared_topic = find_or_create_shared_topic(session, name, keywords, profiles)
+            st.session_state.topic_creation_progress = 0.3
             
             # Subscribe user to the shared topic
             subscription = subscribe_user_to_topic(
@@ -196,6 +200,9 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
                 color=color,
                 icon=icon
             )
+            
+            st.session_state.topic_creation_step = f"✅ Topic '{name}' created, adding to your subscriptions..."
+            st.session_state.topic_creation_progress = 0.4
             
             # Add to legacy topics table for backward compatibility
             existing_topic_row = session.query(Topic).filter_by(name=name, user_id=user_id).first()
@@ -210,7 +217,11 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
             # Set selected topic to the new one
             st.session_state.selected_shared_topic = shared_topic_id
             
-            # Start collection in background
+            st.session_state.topic_creation_step = f"🚀 Starting initial data collection for '{name}'..."
+            st.session_state.topic_creation_progress = 0.5
+            time.sleep(0.5)  # Brief pause to show progress
+            
+            # Step 2: Start collection in background
             try:
                 from monitoring.collectors import collect_topic
                 from monitoring.database import Topic
@@ -223,22 +234,57 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
                 temp_topic.profiles = profiles
                 temp_topic.last_collected = None
                 
-                # Run collection
-                errors = collect_topic(temp_topic, force=True, shared_topic_id=shared_topic_id)
+                def progress_callback(message: str):
+                    st.session_state.topic_creation_step = f"📊 {message}"
+                    # Increment progress during collection (50% to 90%)
+                    current_progress = st.session_state.topic_creation_progress
+                    if current_progress < 0.9:
+                        st.session_state.topic_creation_progress = min(current_progress + 0.05, 0.9)
                 
-                if errors:
-                    st.session_state.topic_creation_status = f"success_with_warnings"
-                    st.session_state.topic_creation_errors = errors
+                st.session_state.topic_creation_step = f"🔍 Collecting data from news, Reddit, and social media..."
+                
+                # Run collection
+                errors = collect_topic(temp_topic, force=True, progress=progress_callback, shared_topic_id=shared_topic_id)
+                
+                st.session_state.topic_creation_step = "📊 Counting collected posts..."
+                st.session_state.topic_creation_progress = 0.95
+                
+                # Count shared posts after collection
+                from monitoring.database import SharedPost
+                session_count = SessionLocal()
+                post_count = session_count.query(SharedPost).filter(SharedPost.shared_topic_id == shared_topic_id).count()
+                session_count.close()
+                
+                st.session_state.topic_creation_progress = 1.0
+                
+                if post_count > 0:
+                    if errors:
+                        st.session_state.topic_creation_status = "success_with_warnings"
+                        st.session_state.topic_creation_errors = errors
+                        st.session_state.topic_creation_posts = post_count
+                        st.session_state.topic_creation_step = f"⚠️ Created with {post_count} posts, but had some collection issues"
+                    else:
+                        st.session_state.topic_creation_status = "success"
+                        st.session_state.topic_creation_posts = post_count
+                        st.session_state.topic_creation_step = f"✅ Successfully created '{name}' with {post_count} posts!"
                 else:
-                    st.session_state.topic_creation_status = "success"
-                    
+                    if errors:
+                        st.session_state.topic_creation_status = "success_with_warnings"
+                        st.session_state.topic_creation_errors = errors
+                        st.session_state.topic_creation_step = f"⚠️ Topic created but collection had issues"
+                    else:
+                        st.session_state.topic_creation_status = "success_no_posts"
+                        st.session_state.topic_creation_step = f"✅ Topic created, but no posts were found yet"
+                        
             except Exception as collect_e:
                 st.session_state.topic_creation_status = "success_no_collection"
                 st.session_state.topic_creation_error = str(collect_e)
+                st.session_state.topic_creation_step = f"✅ Topic created, collection will happen later"
                 
         except Exception as e:
             st.session_state.topic_creation_status = "failed"
             st.session_state.topic_creation_error = str(e)
+            st.session_state.topic_creation_step = f"❌ Failed to create topic: {str(e)}"
         finally:
             st.session_state.topic_creating = False
     
@@ -254,21 +300,65 @@ def render_manage_topics_section(current_user_id: int):
     """Render the manage topics section using shared topic subscriptions."""
     with st.sidebar.expander("⚙️ Manage Topics", expanded=False):
         
-        # Show topic creation status if in progress
+        # Auto-refresh if topic creation is in progress (with timeout)
         if st.session_state.get("topic_creating", False):
-            st.info(f"🔄 Creating topic '{st.session_state.get('topic_creation_name', '')}' in background...")
+            import time
+            # Add timeout to prevent infinite loops
+            start_time = st.session_state.get("topic_creation_start_time", time.time())
+            elapsed = time.time() - start_time
+            if elapsed < 300:  # 5 minute timeout
+                time.sleep(1)  # Small delay to prevent too frequent updates
+                st.rerun()
+            else:
+                # Timeout reached, stop creation
+                st.session_state.topic_creating = False
+                st.session_state.topic_creation_status = "failed"
+                st.session_state.topic_creation_error = "Topic creation timed out after 5 minutes"
+        
+        # Show topic creation progress if in progress
+        if st.session_state.get("topic_creating", False):
+            progress = st.session_state.get("topic_creation_progress", 0)
+            current_step = st.session_state.get("topic_creation_step", "Starting...")
+            topic_name = st.session_state.get("topic_creation_name", "")
+            
+            # Progress bar for topic creation
+            progress_bar = st.progress(progress)
+            st.info(f"🔄 {current_step}")
+            
+            # Show estimated time remaining if available
+            if "topic_creation_start_time" in st.session_state and progress > 0.1:
+                import time
+                elapsed = time.time() - st.session_state.topic_creation_start_time
+                estimated_total = elapsed / progress
+                remaining = estimated_total - elapsed
+                if remaining > 0 and remaining < 300:  # Only show if less than 5 minutes
+                    st.caption(f"⏱️ Est. {remaining:.0f}s remaining")
         
         # Show topic creation results
         status = st.session_state.get("topic_creation_status")
         if status == "success":
-            st.success(f"✅ Topic '{st.session_state.get('topic_creation_name', '')}' created successfully!")
+            topic_name = st.session_state.get("topic_creation_name", "")
+            posts_count = st.session_state.get("topic_creation_posts", 0)
+            st.success(f"✅ Topic '{topic_name}' created with {posts_count} posts!")
             st.session_state.topic_creation_status = None  # Reset
         elif status == "success_with_warnings":
-            st.success(f"✅ Topic '{st.session_state.get('topic_creation_name', '')}' created!")
+            topic_name = st.session_state.get("topic_creation_name", "")
+            posts_count = st.session_state.get("topic_creation_posts", 0)
+            st.success(f"✅ Topic '{topic_name}' created with {posts_count} posts!")
             st.warning("⚠️ Initial data collection had some issues.")
+            if st.session_state.get("topic_creation_errors"):
+                with st.expander("View Collection Issues"):
+                    for error in st.session_state.topic_creation_errors[:3]:
+                        st.error(f"• {error}")
+            st.session_state.topic_creation_status = None  # Reset
+        elif status == "success_no_posts":
+            topic_name = st.session_state.get("topic_creation_name", "")
+            st.success(f"✅ Topic '{topic_name}' created!")
+            st.info("ℹ️ No posts found yet, but data collection will continue automatically.")
             st.session_state.topic_creation_status = None  # Reset
         elif status == "success_no_collection":
-            st.success(f"✅ Topic '{st.session_state.get('topic_creation_name', '')}' created!")
+            topic_name = st.session_state.get("topic_creation_name", "")
+            st.success(f"✅ Topic '{topic_name}' created!")
             st.info("ℹ️ Initial data collection will happen later.")
             st.session_state.topic_creation_status = None  # Reset
         elif status == "failed":
@@ -397,38 +487,93 @@ def render_collect_all_section(current_user_id: int):
     """Render the collect all topics section for user's topics only."""
     with st.sidebar.expander("🔄 Data Collection", expanded=False):
         
-        # Show collection status if in progress
+        # Auto-refresh if collection is in progress (with timeout)
         if st.session_state.get("collection_in_progress", False):
-            st.info("🔄 Collection running in background...")
+            import time
+            # Add timeout to prevent infinite loops
+            start_time = st.session_state.get("collection_start_time", time.time())
+            elapsed = time.time() - start_time
+            if elapsed < 300:  # 5 minute timeout
+                time.sleep(1)  # Small delay to prevent too frequent updates
+                st.rerun()
+            else:
+                # Timeout reached, stop collection
+                st.session_state.collection_in_progress = False
+                st.session_state.collection_status = "failed"
+                st.session_state.collection_error = "Collection timed out after 5 minutes"
+        
+        # Show collection progress with detailed status
+        if st.session_state.get("collection_in_progress", False):
+            progress = st.session_state.get("collection_progress", 0)
+            current_step = st.session_state.get("collection_current_step", "Starting...")
             
+            # Progress bar
+            progress_bar = st.progress(progress)
+            st.info(f"🔄 {current_step}")
+            
+            # Show estimated time remaining if available
+            if "collection_start_time" in st.session_state:
+                import time
+                elapsed = time.time() - st.session_state.collection_start_time
+                if progress > 0.1:  # Only show after 10% complete
+                    estimated_total = elapsed / progress
+                    remaining = estimated_total - elapsed
+                    if remaining > 0:
+                        st.caption(f"⏱️ Est. {remaining:.0f}s remaining")
+        
         # Show collection results
         collection_status = st.session_state.get("collection_status")
         if collection_status == "success":
-            st.success("✅ Collection completed successfully!")
+            posts_collected = st.session_state.get("collection_posts_count", 0)
+            st.success(f"✅ Collection completed! Collected {posts_collected} new posts.")
             st.session_state.collection_status = None  # Reset
         elif collection_status == "partial":
-            st.warning("⚠️ Collection completed with some issues.")
+            posts_collected = st.session_state.get("collection_posts_count", 0)
+            st.warning(f"⚠️ Collection completed with some issues. Collected {posts_collected} posts.")
+            if st.session_state.get("collection_errors"):
+                with st.expander("View Errors"):
+                    for error in st.session_state.collection_errors[:5]:
+                        st.error(f"• {error}")
             st.session_state.collection_status = None  # Reset
         elif collection_status == "failed":
             st.error(f"❌ Collection failed: {st.session_state.get('collection_error', 'Unknown error')}")
             st.session_state.collection_status = None  # Reset
+        elif collection_status == "no_topics":
+            st.info("📭 No topics to collect! Add a topic above to get started.")
+            st.session_state.collection_status = None  # Reset
             
-        if st.button("🔄 Collect My Topics Now", type="primary", use_container_width=True, 
+        # Collect button
+        button_text = "🔄 Collect My Topics Now"
+        if st.session_state.get("collection_in_progress", False):
+            button_text = "⏳ Collecting..."
+            
+        if st.button(button_text, type="primary", use_container_width=True, 
                     disabled=st.session_state.get("collection_in_progress", False)):
             start_background_collection(current_user_id)
 
 
 def start_background_collection(user_id: int):
-    """Start data collection in background thread."""
+    """Start data collection in background thread with proper progress tracking."""
+    import time
+    
+    # Initialize progress tracking
     st.session_state.collection_in_progress = True
+    st.session_state.collection_progress = 0
+    st.session_state.collection_current_step = "Initializing collection..."
+    st.session_state.collection_start_time = time.time()
+    st.session_state.collection_posts_count = 0
     
     def collection_worker():
         try:
-            from monitoring.database import SessionLocal, UserTopicSubscription, SharedTopic
+            from monitoring.database import SessionLocal, UserTopicSubscription, SharedTopic, Topic
+            
+            # Step 1: Get user topics
+            st.session_state.collection_current_step = "📋 Finding your subscribed topics..."
+            st.session_state.collection_progress = 0.1
             
             session = SessionLocal()
             
-            # Get user's subscribed shared topics
+            # Try shared topics first
             user_subscriptions = (
                 session.query(UserTopicSubscription)
                 .filter(UserTopicSubscription.user_id == user_id)
@@ -436,49 +581,98 @@ def start_background_collection(user_id: int):
                 .all()
             )
             
+            # Fallback to legacy topics if no shared topics
             if not user_subscriptions:
-                st.session_state.collection_status = "no_topics"
-                session.close()
-                return
+                user_topics = session.query(Topic).filter(Topic.user_id == user_id).all()
+                if not user_topics:
+                    st.session_state.collection_status = "no_topics"
+                    session.close()
+                    return
+                
+                # Convert to list of topic names for progress
+                topic_names = [t.name for t in user_topics]
+            else:
+                topic_names = [sub.display_name or sub.shared_topic.name for sub in user_subscriptions]
+                user_topics = [sub.shared_topic for sub in user_subscriptions]
             
-            topic_names = [sub.display_name or sub.shared_topic.name for sub in user_subscriptions]
             session.close()
             
-            # Use the global collection for now
-            try:
-                from monitoring.shared_collectors import collect_all_shared_topics_efficiently
+            st.session_state.collection_current_step = f"📊 Found {len(topic_names)} topics to collect"
+            st.session_state.collection_progress = 0.2
+            time.sleep(0.5)  # Brief pause to show progress
+            
+            # Step 2: Start collection
+            total_posts = 0
+            errors = []
+            
+            if user_subscriptions:  # Using shared topics
+                try:
+                    from monitoring.shared_collectors import collect_all_shared_topics_efficiently
+                    
+                    def progress_callback(message: str, progress: float = None):
+                        st.session_state.collection_current_step = f"🔄 {message}"
+                        if progress is not None:
+                            # Map collection progress to 20-90% of total progress
+                            st.session_state.collection_progress = 0.2 + (progress * 0.7)
+                    
+                    st.session_state.collection_current_step = "🚀 Running collection across all sources..."
+                    result = collect_all_shared_topics_efficiently(progress_callback)
+                    
+                    total_posts = result.get('total_posts', 0)
+                    errors = result.get('errors', [])
+                    
+                except ImportError:
+                    # Fallback to legacy collection
+                    st.session_state.collection_current_step = "🔄 Using legacy collection method..."
+                    st.session_state.collection_progress = 0.3
+                    
+                    from monitoring.collectors import collect_all_topics_efficiently
+                    
+                    # Convert shared topics to legacy format for collection
+                    legacy_topics = []
+                    for sub in user_subscriptions:
+                        legacy_topic = Topic()
+                        legacy_topic.id = sub.shared_topic.id
+                        legacy_topic.name = sub.shared_topic.name
+                        legacy_topic.keywords = sub.shared_topic.keywords
+                        legacy_topic.profiles = sub.shared_topic.profiles
+                        legacy_topics.append(legacy_topic)
+                    
+                    def progress_callback(message: str):
+                        st.session_state.collection_current_step = f"🔄 {message}"
+                    
+                    errors = collect_all_topics_efficiently(legacy_topics, progress=progress_callback)
+                    
+            else:  # Using legacy topics
+                from monitoring.collectors import collect_all_topics_efficiently
                 
                 def progress_callback(message: str):
-                    pass  # Silent background operation
+                    st.session_state.collection_current_step = f"🔄 {message}"
+                    # Estimate progress based on topics processed
+                    current_progress = 0.3 + (0.6 * (len([m for m in [message] if "Collecting" in m]) / len(user_topics)))
+                    st.session_state.collection_progress = min(current_progress, 0.9)
                 
-                result = collect_all_shared_topics_efficiently(progress_callback)
+                errors = collect_all_topics_efficiently(user_topics, progress=progress_callback)
+            
+            # Step 3: Finalize
+            st.session_state.collection_current_step = "✅ Finalizing collection..."
+            st.session_state.collection_progress = 0.95
+            st.session_state.collection_posts_count = total_posts
+            
+            # Step 4: Complete
+            st.session_state.collection_progress = 1.0
+            if errors:
+                st.session_state.collection_status = "partial"
+                st.session_state.collection_errors = errors
+                st.session_state.collection_current_step = f"⚠️ Completed with {len(errors)} errors"
+            else:
+                st.session_state.collection_status = "success"
+                st.session_state.collection_current_step = "✅ Collection completed successfully!"
                 
-                if result.get('errors'):
-                    st.session_state.collection_status = "partial"
-                    st.session_state.collection_errors = result['errors']
-                else:
-                    st.session_state.collection_status = "success"
-                    
-            except ImportError:
-                # Fallback to legacy collection
-                from monitoring.collectors import collect_all_topics_efficiently
-                from monitoring.database import Topic
-                
-                session = SessionLocal()
-                user_topics = session.query(Topic).filter(Topic.user_id == user_id).all()
-                session.close()
-                
-                errors = collect_all_topics_efficiently(user_topics)
-                
-                if errors:
-                    st.session_state.collection_status = "partial" 
-                    st.session_state.collection_errors = errors
-                else:
-                    st.session_state.collection_status = "success"
-                    
         except Exception as e:
             st.session_state.collection_status = "failed"
             st.session_state.collection_error = str(e)
+            st.session_state.collection_current_step = f"❌ Collection failed: {str(e)}"
         finally:
             st.session_state.collection_in_progress = False
     
@@ -486,6 +680,7 @@ def start_background_collection(user_id: int):
     thread = threading.Thread(target=collection_worker)
     thread.daemon = True
     thread.start()
+    
     st.toast("🚀 Started data collection in background...")
     st.rerun()
 
