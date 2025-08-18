@@ -258,6 +258,137 @@ def render_topic_header(topic):
     '''), height=250)
 
 
+def render_collection_progress_cards(current_user_id: int):
+    """Render progress cards for topics currently being collected with mock loading phases."""
+    from monitoring.database import SessionLocal, SharedTopic, UserTopicSubscription
+    from datetime import datetime
+    import streamlit as st
+    import time
+    import random
+    
+    session = SessionLocal()
+    try:
+        # Get topics currently being collected for this user
+        collecting_topics = session.query(SharedTopic).join(
+            UserTopicSubscription,
+            SharedTopic.id == UserTopicSubscription.shared_topic_id
+        ).filter(
+            UserTopicSubscription.user_id == current_user_id,
+            SharedTopic.collection_status == 'collecting'
+        ).all()
+        
+        if not collecting_topics:
+            return
+        
+        st.markdown("### 🔄 Collection in Progress")
+        
+        # Define collection phases
+        collection_phases = [
+            {"emoji": "�", "text": "Collecting news articles...", "progress": 15},
+            {"emoji": "🐦", "text": "Collecting social media posts...", "progress": 35},
+            {"emoji": "💬", "text": "Collecting Reddit discussions...", "progress": 55},
+            {"emoji": "📱", "text": "Collecting Facebook posts...", "progress": 70},
+            {"emoji": "📸", "text": "Collecting Instagram content...", "progress": 85},
+            {"emoji": "🔍", "text": "Processing and filtering content...", "progress": 95},
+            {"emoji": "✅", "text": "Finalizing collection...", "progress": 100}
+        ]
+        
+        # Create columns for progress cards
+        cols = st.columns(min(3, len(collecting_topics)))
+        
+        for idx, shared_topic in enumerate(collecting_topics):
+            col_idx = idx % 3
+            with cols[col_idx]:
+                # Get user's display name for this topic
+                subscription = session.query(UserTopicSubscription).filter(
+                    UserTopicSubscription.user_id == current_user_id,
+                    UserTopicSubscription.shared_topic_id == shared_topic.id
+                ).first()
+                
+                topic_name = subscription.display_name if subscription and subscription.display_name else shared_topic.name
+                
+                # Calculate elapsed time to determine phase
+                start_time = shared_topic.collection_start_time
+                if start_time:
+                    elapsed = int((datetime.utcnow() - start_time).total_seconds())
+                    # Each phase lasts about 15-20 seconds, with some randomness
+                    phase_index = min(len(collection_phases) - 1, elapsed // 15)
+                    # Add some randomness to make it feel more realistic
+                    if elapsed > 10:
+                        phase_index = min(len(collection_phases) - 1, (elapsed + random.randint(-5, 10)) // 15)
+                else:
+                    phase_index = 0
+                    elapsed = 0
+                
+                current_phase = collection_phases[phase_index]
+                
+                # Create a smooth progress bar
+                progress_width = min(100, max(5, current_phase["progress"] + random.randint(-5, 5)))
+                
+                # Progress card with realistic loading phases
+                st.markdown(f"""
+                <div style="
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    border-radius: 15px;
+                    padding: 1.5rem;
+                    margin-bottom: 1rem;
+                    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+                    color: white;
+                ">
+                    <div style="display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1rem;">
+                        <span style="font-size: 1.5rem;">📊</span>
+                        <h4 style="margin: 0; font-weight: 600; font-size: 1.1rem;">{topic_name}</h4>
+                    </div>
+                    
+                    <div style="margin-bottom: 1rem;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                            <span style="font-size: 1rem;">{current_phase["emoji"]}</span>
+                            <div style="font-size: 0.9rem; opacity: 0.95; font-weight: 500;">{current_phase["text"]}</div>
+                        </div>
+                        <div style="font-size: 0.75rem; opacity: 0.7;">Running for {elapsed}s</div>
+                    </div>
+                    
+                    <!-- Progress Bar -->
+                    <div style="
+                        background: rgba(255, 255, 255, 0.2);
+                        height: 6px;
+                        border-radius: 3px;
+                        overflow: hidden;
+                        margin-bottom: 0.5rem;
+                    ">
+                        <div style="
+                            background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+                            height: 100%;
+                            width: {progress_width}%;
+                            border-radius: 3px;
+                            transition: width 0.5s ease;
+                            animation: shimmer 2s infinite;
+                        "></div>
+                    </div>
+                    
+                    <div style="font-size: 0.7rem; opacity: 0.6; text-align: right;">
+                        {progress_width}% complete
+                    </div>
+                </div>
+                
+                <style>
+                @keyframes shimmer {{
+                    0% {{ opacity: 0.7; }}
+                    50% {{ opacity: 1; }}
+                    100% {{ opacity: 0.7; }}
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        
+        st.markdown("---")
+        
+    finally:
+        session.close()
+
+
 def render_metrics_summary(topics, session, posts_model):
     """Render the enhanced metrics summary with individual cards for the overview page."""
     from datetime import datetime, timedelta

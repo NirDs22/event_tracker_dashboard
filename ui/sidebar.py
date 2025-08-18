@@ -167,23 +167,40 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
     """Create a new shared topic and start background collection with progress tracking."""
     import time
     
+    # Prevent multiple simultaneous topic creations
+    if st.session_state.get("topic_creating", False):
+        st.error("⚠️ Topic creation already in progress. Please wait for it to complete.")
+        return
+    
+    # Check if there's an existing thread that hasn't been cleaned up
+    existing_thread = st.session_state.get("topic_creation_thread")
+    if existing_thread and existing_thread.is_alive():
+        st.error("⚠️ Previous topic creation still running. Please wait or refresh the page.")
+        return
+    
     # Track creation status in session state
     st.session_state.topic_creating = True
     st.session_state.topic_creation_name = name
-    st.session_state.topic_creation_progress = 0
-    st.session_state.topic_creation_step = "Initializing..."
     st.session_state.topic_creation_start_time = time.time()
     
     def create_topic_worker():
         """Worker function that runs in background thread - NO st.session_state access allowed!"""
         try:
-            from monitoring.shared_topics import find_or_create_shared_topic, subscribe_user_to_topic
-            from monitoring.database import SessionLocal, Topic
+            from monitoring.shared_topics import find_or_create_shared_topic, subscribe_user_to_topic, normalize_topic_name
+            from monitoring.database import SessionLocal, Topic, SharedTopic
             
             session = SessionLocal()
             
+            # Check if shared topic already exists
+            from monitoring.shared_topics import normalize_topic_name
+            normalized_name = normalize_topic_name(name)
+            existing_shared_topic = session.query(SharedTopic).filter(
+                SharedTopic.name == normalized_name
+            ).first()
+            
             # Find or create shared topic
             shared_topic = find_or_create_shared_topic(session, name, keywords, profiles)
+            is_new_topic = existing_shared_topic is None
             
             # Subscribe user to the shared topic
             subscription = subscribe_user_to_topic(
@@ -195,15 +212,124 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
                 icon=icon
             )
             
-            # Add to legacy topics table for backward compatibility
+            # Add to legacy topics table for backward compatibility - avoid UNIQUE constraint issues
             existing_topic_row = session.query(Topic).filter_by(name=name, user_id=user_id).first()
             if not existing_topic_row:
-                topic_row = Topic(name=name, user_id=user_id, icon=icon, color=color, keywords=keywords, profiles=profiles)
+                # For shared topic subscriptions, create a unique name to avoid conflicts
+                # Check if this exact name exists globally (from other users)
+                global_name_exists = session.query(Topic).filter_by(name=name).first()
+                if global_name_exists:
+                    # Use user-specific name to avoid UNIQUE constraint violation
+                    legacy_name = f"{name}_user_{user_id}"
+                else:
+                    legacy_name = name
+                
+                topic_row = Topic(name=legacy_name, user_id=user_id, icon=icon, color=color, keywords=keywords, profiles=profiles)
                 session.add(topic_row)
             
             session.commit()
             shared_topic_id = shared_topic.id
             session.close()
+            
+            # If this is a new topic, trigger collection automatically in separate thread
+            collection_triggered = False
+            if is_new_topic:
+                try:
+                    # Don't block topic creation - start collection in background
+                    print(f"DEBUG: Starting automatic collection for new topic '{name}'")
+                    
+                    def collection_worker():
+                        """Separate thread for collection - doesn't block topic creation"""
+                        try:
+                            # Track collection progress in database (threads can't use st.session_state)
+                            import time
+                            from datetime import datetime
+                            from monitoring.database import SessionLocal, SharedTopic
+                            
+                            progress_session = SessionLocal()
+                            shared_topic_record = progress_session.query(SharedTopic).filter_by(id=shared_topic_id).first()
+                            if shared_topic_record:
+                                # Mark as collecting in database
+                                shared_topic_record.collection_status = 'collecting'
+                                shared_topic_record.collection_start_time = datetime.utcnow()
+                                progress_session.commit()
+                            progress_session.close()
+                            
+                            from monitoring.collectors import collect_topic
+                            from monitoring.database import Topic
+                            
+                            # Create a temporary Topic object for the collector
+                            temp_topic = Topic(
+                                name=name,
+                                keywords=keywords,
+                                profiles=profiles,
+                                user_id=user_id
+                            )
+                            
+                            # Use the legacy collector with shared_topic_id parameter
+                            collection_errors = collect_topic(temp_topic, force=True, shared_topic_id=shared_topic_id)
+                            
+                            # Update progress - collection completed
+                            progress_session = SessionLocal()
+                            shared_topic_record = progress_session.query(SharedTopic).filter_by(id=shared_topic_id).first()
+                            if shared_topic_record:
+                                shared_topic_record.collection_status = 'completed'
+                                shared_topic_record.collection_end_time = datetime.utcnow()
+                                if collection_errors:
+                                    shared_topic_record.collection_errors = str(collection_errors)
+                                progress_session.commit()
+                            progress_session.close()
+                            
+                            # Auto-clear collection status after 10 seconds
+                            def clear_status():
+                                time.sleep(10)
+                                try:
+                                    cleanup_session = SessionLocal()
+                                    topic_record = cleanup_session.query(SharedTopic).filter_by(id=shared_topic_id).first()
+                                    if topic_record and topic_record.collection_status in ['completed', 'failed']:
+                                        topic_record.collection_status = None
+                                        topic_record.collection_start_time = None
+                                        topic_record.collection_end_time = None
+                                        cleanup_session.commit()
+                                    cleanup_session.close()
+                                except Exception:
+                                    pass
+                            
+                            cleanup_thread = threading.Thread(target=clear_status)
+                            cleanup_thread.daemon = True
+                            cleanup_thread.start()
+                            
+                            if collection_errors:
+                                print(f"DEBUG: Automatic collection completed with errors for '{name}': {collection_errors}")
+                            else:
+                                print(f"DEBUG: Automatic collection completed successfully for '{name}'")
+                                
+                        except Exception as e:
+                            print(f"DEBUG: Automatic collection failed for '{name}': {e}")
+                            # Update progress - collection failed
+                            try:
+                                progress_session = SessionLocal()
+                                shared_topic_record = progress_session.query(SharedTopic).filter_by(id=shared_topic_id).first()
+                                if shared_topic_record:
+                                    shared_topic_record.collection_status = 'failed'
+                                    shared_topic_record.collection_errors = str(e)
+                                    progress_session.commit()
+                                progress_session.close()
+                            except:
+                                pass
+                    
+                    # Start collection in separate daemon thread
+                    import threading
+                    collection_thread = threading.Thread(target=collection_worker)
+                    collection_thread.daemon = True
+                    collection_thread.start()
+                    
+                    collection_triggered = True
+                    print(f"DEBUG: Collection thread started for '{name}'")
+                    
+                except Exception as collect_e:
+                    print(f"DEBUG: Failed to start collection thread for '{name}': {collect_e}")
+                    # Don't fail topic creation if collection thread fails to start
             
             # Store results in thread-safe way (no st.session_state access)
             # The main thread will check this via polling
@@ -212,17 +338,29 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
             thread.result = {
                 'status': 'success',
                 'shared_topic_id': shared_topic_id,
-                'name': name
+                'name': name,
+                'is_new_topic': is_new_topic,
+                'collection_triggered': collection_triggered
             }
+            print(f"DEBUG: Topic creation succeeded for '{name}', shared_topic_id: {shared_topic_id}, new_topic: {is_new_topic}")  # Debug logging
                         
         except Exception as e:
-            # Store error result
+            # Store error result - ensure this always happens
             import threading
             thread = threading.current_thread()
+            
+            # Provide user-friendly error messages
+            error_msg = str(e)
+            if "UNIQUE constraint failed" in error_msg:
+                user_friendly_msg = f"Topic '{name}' already exists. Try a different name or check if it's already in your topics."
+            else:
+                user_friendly_msg = f"Failed to create topic: {error_msg}"
+            
             thread.result = {
                 'status': 'failed',
-                'error': str(e)
+                'error': user_friendly_msg
             }
+            print(f"DEBUG: Topic creation failed with error: {e}")  # Debug logging
     
     # Start the thread
     thread = threading.Thread(target=create_topic_worker)
@@ -231,9 +369,6 @@ def create_topic_with_background_collection(name: str, keywords: str, profiles: 
     
     # Store thread reference so we can check results later
     st.session_state.topic_creation_thread = thread
-    st.session_state.topic_creating = True
-    st.session_state.topic_creation_name = name
-    st.session_state.topic_creation_start_time = time.time()
     
     st.toast(f"🚀 Creating topic '{name}'...")
     st.rerun()
@@ -254,7 +389,15 @@ def render_manage_topics_section(current_user_id: int):
                     result = thread.result
                     if result['status'] == 'success':
                         st.session_state.selected_shared_topic = result['shared_topic_id']
-                        st.success(f"✅ Successfully created topic '{result['name']}'!")
+                        
+                        # Provide different messages based on whether it's new/existing topic
+                        if result.get('is_new_topic', False):
+                            if result.get('collection_triggered', False):
+                                st.success(f"✅ Successfully created new topic '{result['name']}' with data collection!")
+                            else:
+                                st.success(f"✅ Successfully created new topic '{result['name']}'! Use 'Collect Now' to gather data.")
+                        else:
+                            st.success(f"✅ Successfully subscribed to existing topic '{result['name']}'!")
                     else:
                         st.error(f"❌ Failed to create topic: {result['error']}")
                 else:
@@ -270,7 +413,7 @@ def render_manage_topics_section(current_user_id: int):
                 start_time = st.session_state.get("topic_creation_start_time", time.time())
                 elapsed = time.time() - start_time
                 if elapsed < 300:  # 5 minute timeout
-                    time.sleep(1)  # Small delay to prevent too frequent updates
+                    # Use Streamlit's auto-refresh mechanism instead of time.sleep()
                     st.rerun()
                 else:
                     # Timeout reached, stop creation
@@ -466,8 +609,7 @@ def render_collect_all_section(current_user_id: int):
                     elapsed = time.time() - st.session_state.collection_start_time
                     st.caption(f"⏱️ Elapsed: {elapsed:.1f}s")
                 
-                # Auto-refresh every second while collection is running
-                time.sleep(1)
+                # Auto-refresh without blocking the main thread
                 st.rerun()
             
         # Collect button

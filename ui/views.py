@@ -7,7 +7,7 @@ from datetime import datetime
 from textwrap import dedent
 from streamlit.components.v1 import html as st_html
 
-from .layout import render_welcome_screen, render_metrics_summary, render_topic_header
+from .layout import render_welcome_screen, render_metrics_summary, render_topic_header, render_collection_progress_cards
 from .charts import create_time_series_chart, create_source_distribution_chart, create_mini_analytics_chart, create_word_cloud, create_source_badges, create_trending_keywords_chart, create_keyword_momentum_chart
 from .cards import render_news_card, render_reddit_card, render_facebook_card, render_youtube_card, render_instagram_card, render_card, render_tldr_button
 from .utils import time_ago, clean_content, _first
@@ -31,6 +31,9 @@ def render_overview_page(topics, session, Post, current_user_id: int):
         </div>
         """, unsafe_allow_html=True)
         return
+    
+    # Show collection progress cards if any topics are being collected
+    render_collection_progress_cards(current_user_id)
     
     # Render topics grid
     render_metrics_summary(user_topics, session, Post)
@@ -207,8 +210,20 @@ def render_topic_detail_page(topic, session, Post):
     if not posts:
         st_html(dedent("""
         <div style="text-align: center; padding: 3rem; background: #f8f9fa; border-radius: 15px;">
-            <h3>📭 No posts collected yet</h3>
-            <p>Click "Collect My Topics Now" in the sidebar to start gathering data.</p>
+            <h3 style="
+                font-size: 1.5rem; 
+                font-weight: 600; 
+                color: #333; 
+                margin-bottom: 1rem;
+                font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+            ">📭 No posts collected yet</h3>
+            <p style="
+                font-size: 1.1rem; 
+                color: #666; 
+                line-height: 1.5;
+                font-family: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+                margin: 0;
+            ">Click "Collect My Topics Now" in the sidebar to start gathering data.</p>
         </div>
         """), height=200)
         return

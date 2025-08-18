@@ -77,6 +77,12 @@ class SharedTopic(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     posts_count = Column(Integer, default=0)  # Cache for performance
     
+    # Collection status tracking
+    collection_status = Column(String, default=None)  # 'collecting', 'completed', 'failed', None
+    collection_start_time = Column(DateTime)
+    collection_end_time = Column(DateTime)
+    collection_errors = Column(Text)
+    
     # Relationships
     posts = relationship('SharedPost', back_populates='shared_topic', cascade='all, delete-orphan')
     subscriptions = relationship('UserTopicSubscription', back_populates='shared_topic', cascade='all, delete-orphan')
@@ -252,6 +258,20 @@ def migrate_database():
             print(f"⚠️ Migration warning for admin user creation: {e}")
             session.rollback()
         
+        # Add collection status fields to shared_topics if they don't exist
+        try:
+            session.execute(text("SELECT collection_status FROM shared_topics LIMIT 1"))
+        except Exception:
+            try:
+                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_status TEXT DEFAULT NULL"))
+                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_start_time DATETIME"))
+                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_end_time DATETIME"))
+                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_errors TEXT"))
+                session.commit()
+                print("✅ Database migrated: Added collection status fields to shared_topics")
+            except Exception as e:
+                print(f"⚠️ Migration warning (collection status): {e}")
+                
         session.close()
     except Exception as e:
         print(f"❌ Migration error: {e}")

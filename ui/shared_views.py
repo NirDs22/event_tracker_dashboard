@@ -583,31 +583,65 @@ def render_shared_topic_detail_page(shared_topic_id: int, session):
         with col2:
             # Add a collect now button for topics with no posts
             if st.button("🚀 Collect Now", type="primary", use_container_width=True, key=f"collect_now_{shared_topic_id}"):
-                with st.spinner(f"Collecting data for {shared_topic.name}..."):
-                    try:
-                        from monitoring.collectors import collect_topic
-                        from monitoring.database import Topic
+                # Create a progress display
+                progress_placeholder = st.empty()
+                
+                try:
+                    from monitoring.collectors import collect_topic
+                    from monitoring.database import Topic
+                    import time
+                    import random
+                    
+                    # Define collection phases for visual feedback
+                    collection_phases = [
+                        {"emoji": "📰", "text": "Collecting news articles..."},
+                        {"emoji": "🐦", "text": "Gathering social media posts..."},
+                        {"emoji": "💬", "text": "Scanning Reddit discussions..."},
+                        {"emoji": "📱", "text": "Searching Facebook posts..."},
+                        {"emoji": "📸", "text": "Finding Instagram content..."},
+                        {"emoji": "🔍", "text": "Processing and filtering..."},
+                        {"emoji": "✅", "text": "Finalizing collection..."}
+                    ]
+                    
+                    # Show progress phases
+                    for i, phase in enumerate(collection_phases):
+                        progress_value = (i + 1) / len(collection_phases)
+                        progress_placeholder.markdown(f"""
+                        <div style="padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white; text-align: center;">
+                            <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">{phase["emoji"]}</div>
+                            <div style="font-weight: 500;">{phase["text"]}</div>
+                            <div style="margin-top: 0.8rem; background: rgba(255,255,255,0.3); height: 6px; border-radius: 3px; overflow: hidden;">
+                                <div style="background: white; height: 100%; width: {progress_value*100:.0f}%; border-radius: 3px; transition: width 0.3s;"></div>
+                            </div>
+                            <div style="margin-top: 0.3rem; font-size: 0.8rem; opacity: 0.9;">{progress_value*100:.0f}% complete</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        time.sleep(0.3 + random.uniform(0, 0.4))  # Realistic timing
+                    
+                    # Create a temporary Topic object for the collector
+                    temp_topic = Topic()
+                    temp_topic.id = shared_topic.id
+                    temp_topic.name = shared_topic.name
+                    temp_topic.keywords = shared_topic.keywords
+                    
+                    # Force collection for this topic
+                    errors = collect_topic(temp_topic, force=True, shared_topic_id=shared_topic.id)
+                    
+                    # Clear progress display and show results
+                    progress_placeholder.empty()
+                    
+                    if errors:
+                        st.error(f"Collection completed with some issues: {'; '.join(errors[:2])}")
+                    else:
+                        st.success("Collection completed successfully!")
+                    
+                    # Refresh the page to show new posts
+                    time.sleep(1)
+                    st.rerun()
                         
-                        # Create a temporary Topic object for the collector
-                        temp_topic = Topic()
-                        temp_topic.id = shared_topic.id
-                        temp_topic.name = shared_topic.name
-                        temp_topic.keywords = shared_topic.keywords
-                        
-                        # Force collection for this topic
-                        errors = collect_topic(temp_topic, force=True, shared_topic_id=shared_topic.id)
-                        
-                        if errors:
-                            st.error(f"Collection completed with some issues: {'; '.join(errors[:2])}")
-                        else:
-                            st.success("Collection completed successfully!")
-                        
-                        # Refresh the page to show new posts
-                        time.sleep(1)
-                        st.rerun()
-                        
-                    except Exception as e:
-                        st.error(f"Collection failed: {str(e)}")
+                except Exception as e:
+                    progress_placeholder.empty()
+                    st.error(f"Collection failed: {str(e)}")
         
         return
     

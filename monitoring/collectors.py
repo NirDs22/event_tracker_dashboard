@@ -708,6 +708,7 @@ def collect_topic(topic: Topic, force: bool = False, progress=None, shared_topic
             session = get_db_session()
             try:
                 posts_saved = 0
+                duplicate_posts = 0
                 for post_data in posts_data:
                     if shared_topic_id:
                         # Save as SharedPost
@@ -717,20 +718,34 @@ def collect_topic(topic: Topic, force: bool = False, progress=None, shared_topic
                         ).first()
                         
                         if not existing:
-                            post = SharedPost(
-                                shared_topic_id=shared_topic_id,
-                                source=post_data.get('source', 'unknown'),
-                                title=post_data.get('title', ''),
-                                content=post_data.get('content', ''),
-                                url=post_data.get('url', ''),
-                                posted_at=post_data.get('posted_at', datetime.utcnow()),
-                                likes=post_data.get('likes', 0),
-                                comments=post_data.get('comments', 0),
-                                image_url=post_data.get('image_url'),
-                                is_photo=post_data.get('is_photo', False)
-                            )
-                            session.add(post)
-                            posts_saved += 1
+                            try:
+                                post = SharedPost(
+                                    shared_topic_id=shared_topic_id,
+                                    source=post_data.get('source', 'unknown'),
+                                    title=post_data.get('title', ''),
+                                    content=post_data.get('content', ''),
+                                    url=post_data.get('url', ''),
+                                    posted_at=post_data.get('posted_at', datetime.utcnow()),
+                                    likes=post_data.get('likes', 0),
+                                    comments=post_data.get('comments', 0),
+                                    image_url=post_data.get('image_url'),
+                                    is_photo=post_data.get('is_photo', False)
+                                )
+                                session.add(post)
+                                session.flush()  # Check for constraint violations early
+                                posts_saved += 1
+                            except Exception as e:
+                                session.rollback()
+                                # Check if it's a duplicate URL error (expected behavior)
+                                if "UNIQUE constraint failed" in str(e) and "url" in str(e):
+                                    duplicate_posts += 1
+                                    # This is expected - just continue without logging as error
+                                    continue
+                                else:
+                                    # This is a real error - log it
+                                    errors.append(f"Failed to save post: {str(e)}")
+                        else:
+                            duplicate_posts += 1
                     else:
                         # Save as regular Post
                         existing = session.query(Post).filter(
@@ -739,20 +754,34 @@ def collect_topic(topic: Topic, force: bool = False, progress=None, shared_topic
                         ).first()
                         
                         if not existing:
-                            post = Post(
-                                topic_id=topic.id,
-                                source=post_data.get('source', 'unknown'),
-                                title=post_data.get('title', ''),
-                                content=post_data.get('content', ''),
-                                url=post_data.get('url', ''),
-                                posted_at=post_data.get('posted_at', datetime.utcnow()),
-                                likes=post_data.get('likes', 0),
-                                comments=post_data.get('comments', 0),
-                                image_url=post_data.get('image_url'),
-                                is_photo=post_data.get('is_photo', False)
-                            )
-                            session.add(post)
-                            posts_saved += 1
+                            try:
+                                post = Post(
+                                    topic_id=topic.id,
+                                    source=post_data.get('source', 'unknown'),
+                                    title=post_data.get('title', ''),
+                                    content=post_data.get('content', ''),
+                                    url=post_data.get('url', ''),
+                                    posted_at=post_data.get('posted_at', datetime.utcnow()),
+                                    likes=post_data.get('likes', 0),
+                                    comments=post_data.get('comments', 0),
+                                    image_url=post_data.get('image_url'),
+                                    is_photo=post_data.get('is_photo', False)
+                                )
+                                session.add(post)
+                                session.flush()  # Check for constraint violations early
+                                posts_saved += 1
+                            except Exception as e:
+                                session.rollback()
+                                # Check if it's a duplicate URL error (expected behavior)
+                                if "UNIQUE constraint failed" in str(e) and "url" in str(e):
+                                    duplicate_posts += 1
+                                    # This is expected - just continue without logging as error
+                                    continue
+                                else:
+                                    # This is a real error - log it
+                                    errors.append(f"Failed to save post: {str(e)}")
+                        else:
+                            duplicate_posts += 1
                 
                 session.commit()
                 
@@ -766,7 +795,10 @@ def collect_topic(topic: Topic, force: bool = False, progress=None, shared_topic
                 session.commit()
                 
                 if progress and hasattr(progress, 'text'):
-                    progress.text(f"Saved {posts_saved} new posts for {topic.name}")
+                    if duplicate_posts > 0:
+                        progress.text(f"Saved {posts_saved} new posts for {topic.name} ({duplicate_posts} duplicates skipped)")
+                    else:
+                        progress.text(f"Saved {posts_saved} new posts for {topic.name}")
                     
             except Exception as db_error:
                 session.rollback()
