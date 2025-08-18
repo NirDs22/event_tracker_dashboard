@@ -13,7 +13,7 @@ def get_cookie_mgr() -> CookieManager:
     # Use a unique key to avoid conflicts and ensure proper initialization
     try:
         if 'cookie_manager' not in st.session_state:
-            print("DEBUG: Initializing new cookie manager")
+            # print("DEBUG: Initializing new cookie manager")
             st.session_state.cookie_manager = CookieManager(key='auth_cookie_mgr_v2')
         
         # Give the cookie manager time to initialize on first run
@@ -24,7 +24,7 @@ def get_cookie_mgr() -> CookieManager:
             
         return st.session_state.cookie_manager
     except Exception as e:
-        print(f"DEBUG: Cookie manager initialization error: {e}")
+        # print(f"DEBUG: Cookie manager initialization error: {e}")
         # Fallback - create new instance
         return CookieManager(key='auth_cookie_mgr_fallback')
 
@@ -55,16 +55,16 @@ def verify_token(token: str, max_age_days: int = 120) -> Optional[int]:
         payload = serializer.loads(token, max_age=max_age_days * 24 * 3600)  # Convert days to seconds
         
         user_id = payload.get("uid")
-        print(f"DEBUG: Token verified successfully, user_id: {user_id}")
+        # print(f"DEBUG: Token verified successfully, user_id: {user_id}")
         return user_id
     except SignatureExpired:
-        print("DEBUG: Token has expired")
+        # print("DEBUG: Token has expired")
         return None
     except BadSignature:
-        print("DEBUG: Token signature is invalid")
+        # print("DEBUG: Token signature is invalid")
         return None
     except (KeyError, TypeError) as e:
-        print(f"DEBUG: Token payload error: {e}")
+        # print(f"DEBUG: Token payload error: {e}")
         return None
 
 
@@ -83,15 +83,16 @@ def set_auth_cookie(cookie_mgr: CookieManager, user_id: int, days: int = 90):
             httpOnly=False,  # Allow JavaScript access if needed
             samesite='Lax'  # Better compatibility
         )
-        print(f"DEBUG: Cookie set with max_age={days * 24 * 3600} seconds")
+        # print(f"DEBUG: Cookie set with max_age={days * 24 * 3600} seconds")
     except Exception as e:
-        print(f"DEBUG: Cookie setting failed: {e}")
+        # print(f"DEBUG: Cookie setting failed: {e}")
         # Fallback: try simpler setting
         try:
             cookie_mgr.set('event_tracker_auth', token)
-            print(f"DEBUG: Cookie set with fallback method")
+            # print(f"DEBUG: Cookie set with fallback method")
         except Exception as e2:
-            print(f"DEBUG: Fallback cookie setting also failed: {e2}")
+            # print(f"DEBUG: Fallback cookie setting also failed: {e2}")
+            pass
 
 
 def get_auth_cookie(cookie_mgr: CookieManager) -> Optional[int]:
@@ -133,19 +134,19 @@ def get_auth_token() -> Optional[str]:
     """Get authentication token from multiple sources with better reliability."""
     try:
         import streamlit as st
-        print("DEBUG: get_auth_token called")
+        # print("DEBUG: get_auth_token called")
         
         # 1. First check session state (fastest)
         if hasattr(st, 'session_state') and 'auth_token' in st.session_state:
             token = st.session_state.auth_token
-            print(f"DEBUG: Found token in session state")
+            # print(f"DEBUG: Found token in session state")
             if token:
                 user_id = verify_token(token)
                 if user_id:
-                    print(f"DEBUG: Session token verified successfully, user_id: {user_id}")
+                    # print(f"DEBUG: Session token verified successfully, user_id: {user_id}")
                     return f"user_{user_id}"
                 else:
-                    print(f"DEBUG: Session token verification failed, clearing")
+                    # print(f"DEBUG: Session token verification failed, clearing")
                     del st.session_state.auth_token
         
         # 2. Check cookies with proper initialization
@@ -155,26 +156,28 @@ def get_auth_token() -> Optional[str]:
             for cookie_name in ['event_tracker_auth', 'auth']:
                 raw_token = cookie_mgr.get(cookie_name)
                 if raw_token:
-                    print(f"DEBUG: Found token in cookie '{cookie_name}'")
+                    # print(f"DEBUG: Found token in cookie '{cookie_name}'")
                     user_id = verify_token(raw_token)
                     if user_id:
-                        print(f"DEBUG: Cookie token verified successfully, user_id: {user_id}")
+                        # print(f"DEBUG: Cookie token verified successfully, user_id: {user_id}")
                         # Store in session state for faster future access
                         st.session_state.auth_token = raw_token
                         return f"user_{user_id}"
                     else:
-                        print(f"DEBUG: Cookie token verification failed")
+                        # print(f"DEBUG: Cookie token verification failed")
+                        pass
         except Exception as cookie_e:
-            print(f"DEBUG: Cookie check failed: {cookie_e}")
+            # print(f"DEBUG: Cookie check failed: {cookie_e}")
+            pass
 
         # 3. Check URL parameters (for shared links or bookmarks)
         try:
             if hasattr(st, 'query_params') and 'auth' in st.query_params:
                 url_token = st.query_params['auth']
-                print(f"DEBUG: Found token in URL parameters")
+                # print(f"DEBUG: Found token in URL parameters")
                 user_id = verify_token(url_token)
                 if user_id:
-                    print(f"DEBUG: URL token verified successfully, user_id: {user_id}")
+                    # print(f"DEBUG: URL token verified successfully, user_id: {user_id}")
                     # Store in session state for future use
                     st.session_state.auth_token = url_token
                     # Also store in cookie for persistence

@@ -73,15 +73,15 @@ def main():
     st.sidebar.markdown("### 🎛️ Topic Management")
     st.sidebar.markdown("---")
     
-    # System toggle (temporary for migration)
-    with st.sidebar.expander("⚙️ System Settings", expanded=False):
-        use_shared = st.checkbox("Use Shared Topic System", value=st.session_state.use_shared_topics, 
-                                help="New efficient system where topics are shared across users")
-        if use_shared != st.session_state.use_shared_topics:
-            st.session_state.use_shared_topics = use_shared
-            st.session_state.selected_topic = None
-            st.session_state.selected_shared_topic = None
-            st.rerun()
+    # System toggle (temporary for migration) - TEMPORARILY DISABLED TO FIX INFINITE LOOP
+    # with st.sidebar.expander("⚙️ System Settings", expanded=False):
+    #     use_shared = st.checkbox("Use Shared Topic System", value=st.session_state.use_shared_topics, 
+    #                             help="New efficient system where topics are shared across users")
+    #     if use_shared != st.session_state.use_shared_topics:
+    #         st.session_state.use_shared_topics = use_shared
+    #         st.session_state.selected_topic = None
+    #         st.session_state.selected_shared_topic = None
+    #         st.rerun()
     
     # Show user status widget
     render_user_status_widget(current_user)

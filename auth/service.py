@@ -31,42 +31,43 @@ class LoginResult(NamedTuple):
     user_id: Optional[int] = None
 
 
-def ensure_user_authenticated() -> AuthResult:
-    """Check if user is authenticated and return appropriate status."""
-    # Check for existing auth token (this now checks session state, localStorage, and cookies)
-    token = get_auth_token()
-    print(f"DEBUG: ensure_user_authenticated - token found: {bool(token)}")
+def ensure_user_authenticated():
+    """Ensure user is authenticated. Returns AuthResult."""
+    import streamlit as st
+    from monitoring.database import get_db_session, User
     
-    if token:
-        print(f"DEBUG: Token value: '{token}'")
-        user_id = int(token.split('_')[1]) if '_' in token else None
-        print(f"DEBUG: Extracted user_id: {user_id}")
+    # Get auth token from various sources (session state, cookies, URL params)
+    auth_token = get_auth_token()
+    
+    if not auth_token:
+        return AuthResult(status=AuthResult.NEED_AUTH)
+    
+    # Parse user ID from token format "user_X"
+    if not auth_token.startswith("user_"):
+        return AuthResult(status=AuthResult.NEED_AUTH)
+    
+    try:
+        user_id = int(auth_token.split("_")[1])
+    except (IndexError, ValueError):
+        return AuthResult(status=AuthResult.NEED_AUTH)
+    
+    # Verify user exists in database
+    try:
+        session = get_db_session()
+        user = session.query(User).filter(User.id == user_id).first()
+        user_exists = user is not None
+        session.close()
         
-        if user_id:
-            # Verify user exists in database
-            session = SessionLocal()
-            try:
-                user = session.query(User).filter_by(id=user_id).first()
-                print(f"DEBUG: User found in database: {bool(user)}")
-                if user:
-                    # Update last login time to track activity
-                    user.last_login = datetime.utcnow()
-                    session.commit()
-                    print(f"DEBUG: User authenticated successfully - user_id={user_id}, email={user.email or 'guest'}")
-                    return AuthResult(AuthResult.AUTHENTICATED, user_id=user_id)
-                else:
-                    print(f"DEBUG: User not found in database for user_id={user_id}, clearing invalid token")
-                    # Clear invalid token
-                    clear_auth_token()
-            except Exception as e:
-                print(f"DEBUG: Database error during authentication: {e}")
-                session.rollback()
-            finally:
-                session.close()
+        if not user_exists:
+            # Clear invalid session state
+            if 'auth_token' in st.session_state:
+                del st.session_state.auth_token
+            return AuthResult(status=AuthResult.NEED_AUTH)
+            
+    except Exception as e:
+        return AuthResult(status=AuthResult.NEED_AUTH)
     
-    print("DEBUG: No valid authentication found")
-    # No valid authentication found
-    return AuthResult(AuthResult.NEED_AUTH)
+    return AuthResult(status=AuthResult.AUTHENTICATED, user_id=user_id)
 
 
 def logout() -> None:

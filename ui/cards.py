@@ -790,7 +790,7 @@ def render_tldr_button(title, summary, content_type="post", tab_context=""):
             print(f"DEBUG: Prompt: {prompt}")
             
             # Try different AI models
-            models = ["gpt-4", "gpt-3.5-turbo", "mixtral-8x7b"]
+            models = ["gpt-4",  "mixtral-8x7b", "gpt-3.5-turbo"]
             ai_response = None
             
             for model in models:
