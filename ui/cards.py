@@ -739,17 +739,18 @@ def render_instagram_card(post):
     if IS_CLOUD:
         st.markdown('</div>', unsafe_allow_html=True)
 
-
+TLDR_COUNTER = 0
 def render_tldr_button(title, summary, content_type="post", tab_context=""):
     """Render TL;DR button with AI summary functionality - SIMPLIFIED WORKING VERSION"""
     import hashlib
     import time
     import random
-    
-    # Create simple unique key with tab context and random element
-    content_hash = hashlib.md5(f"{title}:{summary}:{tab_context}".encode()).hexdigest()[:8] 
-    random_suffix = random.randint(1000, 9999)
-    unique_key = f"tldr_{content_type.replace(' ', '_')}_{content_hash}_{tab_context}_{random_suffix}"
+
+    global TLDR_COUNTER
+
+    # Create simple unique key
+    content_hash = hashlib.md5(f"{title}:{summary}".encode()).hexdigest()
+    unique_key = f"tldr_{content_type.replace(' ', '_')}_{content_hash}"
     
     # Initialize session state keys
     summary_key = f"summary_{unique_key}"
@@ -769,7 +770,7 @@ def render_tldr_button(title, summary, content_type="post", tab_context=""):
             st.success(f"**🤖 AI Summary:** {st.session_state[summary_key]}")
         
         # Reset button
-        if st.button("✅ Got it!", key=f"reset_{unique_key}", use_container_width=True):
+        if st.button("✅ Got it!", key=f"reset_{unique_key}_{int(time.time())}_{random.randint(1000, 9999)}", use_container_width=True):
             st.session_state[summary_key] = None
             st.session_state[clicked_key] = False
             st.rerun()
@@ -783,10 +784,10 @@ def render_tldr_button(title, summary, content_type="post", tab_context=""):
             
             # Create prompt using your specified format
             subject = title if title and len(title.strip()) > 3 else content_type
-            prompt = f"Give a summary of this post or article about {subject} - title {title}; content {summary}"
-            
+            prompt = f"Give a professional summary of this post or article about {subject}, No questions. - title {title}; content {summary}"
+
             print(f"DEBUG: Processing AI request for {unique_key}")
-            print(f"DEBUG: Prompt: {prompt[:100]}...")
+            print(f"DEBUG: Prompt: {prompt}")
             
             # Try different AI models
             models = ["gpt-4", "gpt-3.5-turbo", "mixtral-8x7b"]
@@ -797,7 +798,7 @@ def render_tldr_button(title, summary, content_type="post", tab_context=""):
                     response = g4f.ChatCompletion.create(
                         model=model,
                         messages=[
-                            {"role": "system", "content": "Create concise 2-3 sentence summaries of posts and articles."},
+                            {"role": "system", "content": "Create concise 2-3 sentence summaries of posts and articles. No questions."},
                             {"role": "user", "content": prompt}
                         ]
                     )
@@ -828,7 +829,16 @@ def render_tldr_button(title, summary, content_type="post", tab_context=""):
     
     else:
         # Initial state - show TL;DR button
-        if st.button("📄 TL;DR", key=unique_key, use_container_width=True):
-            print(f"DEBUG: TL;DR clicked for {unique_key}")
-            st.session_state[clicked_key] = True
-            st.rerun()
+        try:
+            if st.button("📄 TL;DR", key=f"tldr_{unique_key}", use_container_width=True):
+                print(f"DEBUG: TL;DR clicked for {unique_key}")
+                st.session_state[clicked_key] = True
+                st.rerun()
+        except st.errors.StreamlitDuplicateElementKey as e:
+            print(f"DEBUG: Error showing TL;DR button: {e}")
+            TLDR_COUNTER += 1
+            unique_key = f"tldr_{content_type.replace(' ', '_')}_{content_hash}_{TLDR_COUNTER}"
+            if st.button("📄 TL;DR", key=f"tldr_{unique_key}", use_container_width=True):
+                print(f"DEBUG: TL;DR clicked for {unique_key}")
+                st.session_state[clicked_key] = True
+                st.rerun()
