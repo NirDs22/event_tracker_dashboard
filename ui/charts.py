@@ -199,7 +199,7 @@ def create_word_cloud(text: str) -> None:
             colormap="viridis",
             font_path=font,
         ).generate(text)
-        st.image(wc.to_array(), use_column_width=True)
+        st.image(wc.to_array(), use_container_width=True)
     except Exception as e:
         st.error(f"Could not generate word cloud: {e}")
 

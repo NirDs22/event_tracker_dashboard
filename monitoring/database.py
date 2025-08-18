@@ -5,7 +5,15 @@ from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 from monitoring.secrets import get_secret
 
-DB_PATH = get_secret('TRACKER_DB', 'tracker.db')
+# Configure writable database path for Streamlit Cloud
+DB_PATH = get_secret('TRACKER_DB')
+if not DB_PATH:
+    # Create data directory if it doesn't exist
+    data_dir = 'data'
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+    DB_PATH = os.path.join(data_dir, 'tracker.db')
+
 engine = create_engine(f'sqlite:///{DB_PATH}', connect_args={'check_same_thread': False})
 SessionLocal = sessionmaker(bind=engine)
 

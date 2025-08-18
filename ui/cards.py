@@ -611,29 +611,92 @@ def render_news_card(item):
         idx = None
     unique_id = uuid.uuid4().hex
     chat_key = f"chat_ai_news_{hash(str(title)+str(summary)+str(age))}_{idx if idx is not None else ''}_{unique_id}"
-    if st.button("💬 Chat with AI about this post", key=chat_key, use_container_width=True):
-        import g4f
-        prompt = f"Explain what this news post is about.\nTitle: {title}\nContent: {summary}"
-        g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
-        response = None
-        error_msgs = []
-        for model_name in g4f_models:
-            with st.spinner(f"Please wait... Trying AI model: {model_name}"):
-                try:
-                    response = g4f.ChatCompletion.create(
-                        model=model_name,
-                        messages=[
-                            {"role": "system", "content": "You are an expert explainer. Explain the news post in simple terms."},
-                            {"role": "user", "content": prompt}
-                        ]
-                    )
-                    if response and len(response.strip()) > 10:
-                        st.success(f"AI ({model_name}) says: {response.strip()}")
-                        break
-                except Exception as e:
-                    error_msgs.append(f"{model_name} failed: {e}")
-        else:
-            st.error("All AI models failed.\n" + "\n".join(error_msgs))
+    chat_state_key = f"chat_ai_state_{chat_key}"
+    if chat_state_key not in st.session_state:
+        st.session_state[chat_state_key] = {"waiting": False, "answer": None}
+    if st.session_state[chat_state_key]["waiting"]:
+        st.button("Wait for AI...", key=f"wait_{chat_key}", disabled=True, use_container_width=True)
+    else:
+        if st.button("💬 Chat with AI about this post", key=chat_key, use_container_width=True):
+            st.session_state[chat_state_key]["waiting"] = True
+            st.experimental_rerun()
+    if st.session_state[chat_state_key]["waiting"] and st.session_state[chat_state_key]["answer"] is None:
+        try:
+            import g4f
+            prompt = f"Explain what this news post is about.\nTitle: {title}\nContent: {summary}"
+            g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+            response = None
+            error_msgs = []
+            for model_name in g4f_models:
+                with st.spinner(f"Please wait... Trying AI model: {model_name}"):
+                    try:
+                        response = g4f.ChatCompletion.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": "You are an expert explainer. Explain the news post in simple terms."},
+                                {"role": "user", "content": prompt}
+                            ]
+                        )
+                        if response and len(response.strip()) > 10:
+                            st.session_state[chat_state_key]["answer"] = response.strip()
+                            st.session_state[chat_state_key]["waiting"] = False
+                            st.experimental_rerun()
+                            break
+                    except Exception as e:
+                        error_msgs.append(f"{model_name} failed: {e}")
+            else:
+                st.session_state[chat_state_key]["answer"] = "All AI models failed.\n" + "\n".join(error_msgs)
+                st.session_state[chat_state_key]["waiting"] = False
+                st.experimental_rerun()
+        except Exception as e:
+            st.error(f"[DEBUG] AI backend error: {e}")
+            st.session_state[chat_state_key]["answer"] = f"[DEBUG] AI backend error: {e}"
+            st.session_state[chat_state_key]["waiting"] = False
+            st.experimental_rerun()
+    if st.session_state[chat_state_key]["answer"]:
+        st.info(st.session_state[chat_state_key]["answer"])
+        followup = st.text_input("Ask the AI something in return:", key=f"followup_{chat_key}")
+        if followup:
+            st.session_state[chat_state_key]["waiting"] = True
+            st.session_state[chat_state_key]["answer"] = None
+            st.session_state[chat_state_key]["followup_prompt"] = followup
+            st.experimental_rerun()
+        if st.session_state[chat_state_key].get("followup_prompt") and st.session_state[chat_state_key]["waiting"] and st.session_state[chat_state_key]["answer"] is None:
+            try:
+                import g4f
+                prompt = st.session_state[chat_state_key]["followup_prompt"]
+                g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+                response = None
+                error_msgs = []
+                for model_name in g4f_models:
+                    with st.spinner(f"Please wait... Trying AI model: {model_name}"):
+                        try:
+                            response = g4f.ChatCompletion.create(
+                                model=model_name,
+                                messages=[
+                                    {"role": "system", "content": "You are an expert explainer. Answer the user's follow-up question about the news post."},
+                                    {"role": "user", "content": prompt}
+                                ]
+                            )
+                            if response and len(response.strip()) > 10:
+                                st.session_state[chat_state_key]["answer"] = response.strip()
+                                st.session_state[chat_state_key]["waiting"] = False
+                                st.session_state[chat_state_key]["followup_prompt"] = None
+                                st.experimental_rerun()
+                                break
+                        except Exception as e:
+                            error_msgs.append(f"{model_name} failed: {e}")
+                else:
+                    st.session_state[chat_state_key]["answer"] = "All AI models failed.\n" + "\n".join(error_msgs)
+                    st.session_state[chat_state_key]["waiting"] = False
+                    st.session_state[chat_state_key]["followup_prompt"] = None
+                    st.experimental_rerun()
+            except Exception as e:
+                st.error(f"[DEBUG] AI backend error: {e}")
+                st.session_state[chat_state_key]["answer"] = f"[DEBUG] AI backend error: {e}"
+                st.session_state[chat_state_key]["waiting"] = False
+                st.session_state[chat_state_key]["followup_prompt"] = None
+                st.experimental_rerun()
 
     # Close the container div
     if IS_CLOUD:
@@ -678,29 +741,92 @@ def render_reddit_card(post):
         idx = None
     unique_id = uuid.uuid4().hex
     chat_key = f"chat_ai_reddit_{hash(str(title)+str(summary)+str(age))}_{idx if idx is not None else ''}_{unique_id}"
-    if st.button("💬 Chat with AI about this post", key=chat_key, use_container_width=True):
-        import g4f
-        prompt = f"Explain what this Reddit post is about.\nTitle: {title}\nContent: {summary}"
-        g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
-        response = None
-        error_msgs = []
-        for model_name in g4f_models:
-            with st.spinner(f"Please wait... Trying AI model: {model_name}"):
-                try:
-                    response = g4f.ChatCompletion.create(
-                        model=model_name,
-                        messages=[
-                            {"role": "system", "content": "You are an expert explainer. Explain the Reddit post in simple terms."},
-                            {"role": "user", "content": prompt}
-                        ]
-                    )
-                    if response and len(response.strip()) > 10:
-                        st.success(f"AI ({model_name}) says: {response.strip()}")
-                        break
-                except Exception as e:
-                    error_msgs.append(f"{model_name} failed: {e}")
-        else:
-            st.error("All AI models failed.\n" + "\n".join(error_msgs))
+    chat_state_key = f"chat_ai_state_{chat_key}"
+    if chat_state_key not in st.session_state:
+        st.session_state[chat_state_key] = {"waiting": False, "answer": None}
+    if st.session_state[chat_state_key]["waiting"]:
+        st.button("Wait for AI...", key=f"wait_{chat_key}", disabled=True, use_container_width=True)
+    else:
+        if st.button("💬 Chat with AI about this post", key=chat_key, use_container_width=True):
+            st.session_state[chat_state_key]["waiting"] = True
+            st.experimental_rerun()
+    if st.session_state[chat_state_key]["waiting"] and st.session_state[chat_state_key]["answer"] is None:
+        try:
+            import g4f
+            prompt = f"Explain what this Reddit post is about.\nTitle: {title}\nContent: {summary}"
+            g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+            response = None
+            error_msgs = []
+            for model_name in g4f_models:
+                with st.spinner(f"Please wait... Trying AI model: {model_name}"):
+                    try:
+                        response = g4f.ChatCompletion.create(
+                            model=model_name,
+                            messages=[
+                                {"role": "system", "content": "You are an expert explainer. Explain the Reddit post in simple terms."},
+                                {"role": "user", "content": prompt}
+                            ]
+                        )
+                        if response and len(response.strip()) > 10:
+                            st.session_state[chat_state_key]["answer"] = response.strip()
+                            st.session_state[chat_state_key]["waiting"] = False
+                            st.experimental_rerun()
+                            break
+                    except Exception as e:
+                        error_msgs.append(f"{model_name} failed: {e}")
+            else:
+                st.session_state[chat_state_key]["answer"] = "All AI models failed.\n" + "\n".join(error_msgs)
+                st.session_state[chat_state_key]["waiting"] = False
+                st.experimental_rerun()
+        except Exception as e:
+            st.error(f"[DEBUG] AI backend error: {e}")
+            st.session_state[chat_state_key]["answer"] = f"[DEBUG] AI backend error: {e}"
+            st.session_state[chat_state_key]["waiting"] = False
+            st.experimental_rerun()
+    if st.session_state[chat_state_key]["answer"]:
+        st.info(st.session_state[chat_state_key]["answer"])
+        followup = st.text_input("Ask the AI something in return:", key=f"followup_{chat_key}")
+        if followup:
+            st.session_state[chat_state_key]["waiting"] = True
+            st.session_state[chat_state_key]["answer"] = None
+            st.session_state[chat_state_key]["followup_prompt"] = followup
+            st.experimental_rerun()
+        if st.session_state[chat_state_key].get("followup_prompt") and st.session_state[chat_state_key]["waiting"] and st.session_state[chat_state_key]["answer"] is None:
+            try:
+                import g4f
+                prompt = st.session_state[chat_state_key]["followup_prompt"]
+                g4f_models = ["gpt-3.5-turbo", "gpt-4", "mixtral-8x7b"]
+                response = None
+                error_msgs = []
+                for model_name in g4f_models:
+                    with st.spinner(f"Please wait... Trying AI model: {model_name}"):
+                        try:
+                            response = g4f.ChatCompletion.create(
+                                model=model_name,
+                                messages=[
+                                    {"role": "system", "content": "You are an expert explainer. Answer the user's follow-up question about the Reddit post."},
+                                    {"role": "user", "content": prompt}
+                                ]
+                            )
+                            if response and len(response.strip()) > 10:
+                                st.session_state[chat_state_key]["answer"] = response.strip()
+                                st.session_state[chat_state_key]["waiting"] = False
+                                st.session_state[chat_state_key]["followup_prompt"] = None
+                                st.experimental_rerun()
+                                break
+                        except Exception as e:
+                            error_msgs.append(f"{model_name} failed: {e}")
+                else:
+                    st.session_state[chat_state_key]["answer"] = "All AI models failed.\n" + "\n".join(error_msgs)
+                    st.session_state[chat_state_key]["waiting"] = False
+                    st.session_state[chat_state_key]["followup_prompt"] = None
+                    st.experimental_rerun()
+            except Exception as e:
+                st.error(f"[DEBUG] AI backend error: {e}")
+                st.session_state[chat_state_key]["answer"] = f"[DEBUG] AI backend error: {e}"
+                st.session_state[chat_state_key]["waiting"] = False
+                st.session_state[chat_state_key]["followup_prompt"] = None
+                st.experimental_rerun()
 
     # Close the container div
     if IS_CLOUD:

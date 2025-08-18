@@ -81,84 +81,52 @@ def render_digest_email_section():
 
 
 def render_add_topic_section(current_user_id: int):
-    """Render the add new topic section with shared topic system."""
+    """Render the add new topic section with shared topic system using a form."""
     with st.sidebar.expander("➕ Add New Topic", expanded=True):
         
-        # Topic search and creation
-        name = st.text_input("📝 Topic or Person", placeholder="e.g., AI Technology, Elon Musk")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            icon = st.text_input("🎭 Icon", value="📌", help="Choose an emoji to represent this topic")
-        with col2:
-            color = st.color_picker("🎨 Color", "#667eea", help="Pick a theme color for this topic")
-        
-        keywords = st.text_input("🔍 Keywords", placeholder="AI, machine learning, technology", help="Comma-separated keywords to filter content")
-        profiles = st.text_input("👥 Social Profiles", placeholder="@username, facebook.com/page", help="Social media profiles to monitor")
-        
-        create_button_clicked = st.button("✨ Create Topic", type="primary", use_container_width=True)
-        
-        if create_button_clicked:
+        with st.form("add_topic_form"):
+            # Topic search and creation
+            name = st.text_input(
+                "📝 Topic or Person", 
+                placeholder="e.g., AI Technology, Elon Musk",
+                help="Enter a topic name or person you want to track"
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                icon = st.text_input(
+                    "🎭 Icon", 
+                    value="📌", 
+                    help="Choose an emoji to represent this topic"
+                )
+            with col2:
+                color = st.color_picker(
+                    "🎨 Color", 
+                    "#667eea", 
+                    help="Pick a theme color for this topic"
+                )
+            
+            keywords = st.text_input(
+                "🔍 Keywords", 
+                placeholder="AI, machine learning, technology",
+                help="Comma-separated keywords to filter content. Use specific terms for better results."
+            )
+            profiles = st.text_input(
+                "👥 Social Profiles", 
+                placeholder="@username, facebook.com/page",
+                help="Social media profiles to monitor. Enter usernames or page URLs."
+            )
+            
+            submitted = st.form_submit_button("✨ Create Topic", type="primary", use_container_width=True)
+            
+        if submitted:
             if not name:
                 st.error("Please enter a topic name")
+            elif not keywords:
+                st.error("Please enter at least one keyword")
             else:
-                # Simply create/subscribe to topic regardless of whether it exists
-                # This is what the user wants - one button that just works!
-                from monitoring.database import SessionLocal
-                from monitoring.shared_topics import find_exact_shared_topic, subscribe_user_to_topic, get_shared_topic_stats
-                
-                session = SessionLocal()
-                try:
-                    # Check if topic already exists
-                    existing_topic = find_exact_shared_topic(session, name)
-                    
-                    if existing_topic:
-                        # Topic exists - subscribe user if not already subscribed
-                        from monitoring.database import UserTopicSubscription, Topic
-                        # Check if user is already subscribed
-                        already_subscribed = session.query(UserTopicSubscription).filter_by(
-                            user_id=current_user_id,
-                            shared_topic_id=existing_topic.id
-                        ).first()
-                        if already_subscribed:
-                            st.success(f"✅ You're already subscribed to '{name}'!")
-                        else:
-                            # Subscribe to existing topic
-                            subscription = subscribe_user_to_topic(
-                                session, current_user_id, existing_topic.id,
-                                display_name=name, color=color, icon=icon
-                            )
-                            stats = get_shared_topic_stats(session, existing_topic.id)
-                            st.success(f"✅ Subscribed to existing topic '{name}' ({stats['posts_count']} posts)!")
-                        # Also add to topics table for compatibility, only if not already exists for this user
-                        session2 = SessionLocal()
-                        existing_topic_row = session2.query(Topic).filter_by(name=name, user_id=current_user_id).first()
-                        if not existing_topic_row:
-                            topic_row = Topic(name=name, user_id=current_user_id, icon=icon, color=color)
-                            session2.add(topic_row)
-                            session2.commit()
-                        session2.close()
-                        session.close()
-                        st.rerun()
-                    else:
-                        # Topic doesn't exist - create new one and subscribe
-                        session.close()  # Close before calling create function
-                        create_new_shared_topic(name, icon, color, keywords, profiles, current_user_id)
-                        # Also add to topics table for compatibility, only if not already exists for this user
-                        from monitoring.database import SessionLocal, Topic
-                        session2 = SessionLocal()
-                        existing_topic_row = session2.query(Topic).filter_by(name=name, user_id=current_user_id).first()
-                        if not existing_topic_row:
-                            topic_row = Topic(name=name, user_id=current_user_id, icon=icon, color=color)
-                            session2.add(topic_row)
-                            session2.commit()
-                        session2.close()
-                        st.rerun()
-                        
-                except Exception as e:
-                    session.rollback()
-                    session.close()
-                    st.error(f"❌ Error creating/subscribing to topic: {str(e)}")
+                # Start background thread for topic creation and collection
+                create_topic_with_background_collection(name, keywords, profiles, icon, color, current_user_id)
 
 
 def render_test_email_section():
@@ -197,26 +165,145 @@ def render_test_email_section():
                 st.info("Create topics first to test email digests")
 
 
+def create_topic_with_background_collection(name: str, keywords: str, profiles: str, icon: str, color: str, user_id: int):
+    """Create a new shared topic and start background collection."""
+    # Track creation status in session state
+    if "topic_creating" not in st.session_state:
+        st.session_state.topic_creating = False
+    if "topic_creation_status" not in st.session_state:
+        st.session_state.topic_creation_status = None
+    
+    # Set creation status
+    st.session_state.topic_creating = True
+    st.session_state.topic_creation_name = name
+    
+    def create_topic_worker():
+        try:
+            from monitoring.shared_topics import find_or_create_shared_topic, subscribe_user_to_topic
+            from monitoring.database import SessionLocal, Topic
+            
+            session = SessionLocal()
+            
+            # Find or create shared topic
+            shared_topic = find_or_create_shared_topic(session, name, keywords, profiles)
+            
+            # Subscribe user to the shared topic
+            subscription = subscribe_user_to_topic(
+                session,
+                user_id,
+                shared_topic.id,
+                display_name=name,
+                color=color,
+                icon=icon
+            )
+            
+            # Add to legacy topics table for backward compatibility
+            existing_topic_row = session.query(Topic).filter_by(name=name, user_id=user_id).first()
+            if not existing_topic_row:
+                topic_row = Topic(name=name, user_id=user_id, icon=icon, color=color, keywords=keywords, profiles=profiles)
+                session.add(topic_row)
+            
+            session.commit()
+            shared_topic_id = shared_topic.id
+            session.close()
+            
+            # Set selected topic to the new one
+            st.session_state.selected_shared_topic = shared_topic_id
+            
+            # Start collection in background
+            try:
+                from monitoring.collectors import collect_topic
+                from monitoring.database import Topic
+                
+                # Create a temporary Topic object for the collector
+                temp_topic = Topic()
+                temp_topic.id = shared_topic_id
+                temp_topic.name = name
+                temp_topic.keywords = keywords
+                temp_topic.profiles = profiles
+                temp_topic.last_collected = None
+                
+                # Run collection
+                errors = collect_topic(temp_topic, force=True, shared_topic_id=shared_topic_id)
+                
+                if errors:
+                    st.session_state.topic_creation_status = f"success_with_warnings"
+                    st.session_state.topic_creation_errors = errors
+                else:
+                    st.session_state.topic_creation_status = "success"
+                    
+            except Exception as collect_e:
+                st.session_state.topic_creation_status = "success_no_collection"
+                st.session_state.topic_creation_error = str(collect_e)
+                
+        except Exception as e:
+            st.session_state.topic_creation_status = "failed"
+            st.session_state.topic_creation_error = str(e)
+        finally:
+            st.session_state.topic_creating = False
+    
+    # Start the thread
+    thread = threading.Thread(target=create_topic_worker)
+    thread.daemon = True
+    thread.start()
+    st.toast(f"🚀 Creating topic '{name}' and collecting initial data...")
+    st.rerun()
+
+
 def render_manage_topics_section(current_user_id: int):
-    # Diagnostic: Show all topics in the database for debugging
-    session_diag = SessionLocal()
-    all_topics = session_diag.query(Topic).all()
-    session_diag.close()
-    if all_topics:
-        st.info(f"[DEBUG] All topics in DB: {[{'id': t.id, 'name': t.name, 'user_id': t.user_id} for t in all_topics]}")
-    else:
-        st.info("[DEBUG] No topics found in DB at all.")
-    """Render the manage topics section."""
+    """Render the manage topics section using shared topic subscriptions."""
     with st.sidebar.expander("⚙️ Manage Topics", expanded=False):
-        session = SessionLocal()
-        topics = session.query(Topic).filter(Topic.user_id == current_user_id).all()
-        topic_names = [t.name for t in topics]
-        st.info(f"[DEBUG] current_user_id: {current_user_id}, topics found: {len(topics)}")
-        session.close()
+        
+        # Show topic creation status if in progress
+        if st.session_state.get("topic_creating", False):
+            st.info(f"🔄 Creating topic '{st.session_state.get('topic_creation_name', '')}' in background...")
+        
+        # Show topic creation results
+        status = st.session_state.get("topic_creation_status")
+        if status == "success":
+            st.success(f"✅ Topic '{st.session_state.get('topic_creation_name', '')}' created successfully!")
+            st.session_state.topic_creation_status = None  # Reset
+        elif status == "success_with_warnings":
+            st.success(f"✅ Topic '{st.session_state.get('topic_creation_name', '')}' created!")
+            st.warning("⚠️ Initial data collection had some issues.")
+            st.session_state.topic_creation_status = None  # Reset
+        elif status == "success_no_collection":
+            st.success(f"✅ Topic '{st.session_state.get('topic_creation_name', '')}' created!")
+            st.info("ℹ️ Initial data collection will happen later.")
+            st.session_state.topic_creation_status = None  # Reset
+        elif status == "failed":
+            st.error(f"❌ Failed to create topic: {st.session_state.get('topic_creation_error', 'Unknown error')}")
+            st.session_state.topic_creation_status = None  # Reset
+        
+        # Get user's subscriptions from shared topic system
+        use_shared_topics = True
+        
+        if use_shared_topics:
+            try:
+                from monitoring.shared_topics import get_user_subscriptions
+                session = SessionLocal()
+                subscriptions = get_user_subscriptions(session, current_user_id)
+                session.close()
+                
+                topic_names = [sub['name'] for sub in subscriptions]
+                
+            except ImportError:
+                # Fall back to legacy system
+                use_shared_topics = False
+        
+        if not use_shared_topics:
+            # Legacy fallback
+            session = SessionLocal()
+            topics = session.query(Topic).filter(Topic.user_id == current_user_id).all()
+            topic_names = [t.name for t in topics]
+            session.close()
         
         if topic_names:
-            remove_choice = st.selectbox("Select topic to delete", ["None"] + topic_names, 
-                                       help="⚠️ This will permanently delete all data for this topic")
+            remove_choice = st.selectbox(
+                "Select topic to delete", 
+                ["None"] + topic_names, 
+                help="⚠️ This will permanently delete all data for this topic"
+            )
             
             if remove_choice != "None":
                 st.warning(f"⚠️ You are about to delete '{remove_choice}' and ALL its data!")
@@ -227,57 +314,180 @@ def render_manage_topics_section(current_user_id: int):
                 if st.checkbox("✅ I understand this will permanently delete all data", key=confirm_key):
                     if st.button("🗑️ DELETE FOREVER", type="primary", use_container_width=True, 
                                help="This will immediately delete the topic and all its posts"):
-                        # Direct deletion without additional confirmation
-                        session_del = SessionLocal()
-                        try:
-                            to_del = session_del.query(Topic).filter_by(name=remove_choice).first()
-                            if to_del:
-                                deleted_topic_id = to_del.id
-                                
-                                # Count and delete associated posts
-                                posts_count = session_del.query(Post).filter_by(topic_id=to_del.id).count()
-                                session_del.query(Post).filter_by(topic_id=to_del.id).delete()
-                                
-                                # Delete the topic
-                                session_del.delete(to_del)
-                                session_del.commit()
-                                
-                                # If the deleted topic was currently selected, reset to home screen
-                                if (hasattr(st.session_state, 'selected_topic') and 
-                                    st.session_state.selected_topic == deleted_topic_id):
-                                    st.session_state.selected_topic = None
-                                
-                                # Clear any related session states
-                                keys_to_delete = [key for key in list(st.session_state.keys()) 
-                                                if remove_choice in key and 'confirm_delete' in key]
-                                for key in keys_to_delete:
-                                    del st.session_state[key]
-                                
-                                st.success(f"✅ Deleted '{remove_choice}' and {posts_count} posts!")
-                                st.info("🏠 Returning to home screen...")
-                                st.rerun()
-                            else:
-                                st.error("❌ Topic not found!")
-                        except Exception as e:
-                            st.error(f"❌ Error deleting topic: {str(e)}")
-                            session_del.rollback()
-                        finally:
-                            session_del.close()
+                        delete_user_topic(current_user_id, remove_choice, use_shared_topics)
                 else:
                     st.info("👆 Check the box above to enable deletion")
         else:
-            st.info("No topics to manage yet")
+            st.info("🎯 Ready to track your first topic! Add one above to get started.")
     
     st.sidebar.markdown("---")
+
+
+def delete_user_topic(user_id: int, topic_name: str, use_shared_topics: bool):
+    """Delete a user's topic subscription and optionally the topic itself."""
+    try:
+        if use_shared_topics:
+            from monitoring.shared_topics import get_user_subscriptions, unsubscribe_user_from_topic
+            from monitoring.database import Topic
+            
+            session = SessionLocal()
+            
+            # Find the subscription
+            subscriptions = get_user_subscriptions(session, user_id)
+            target_subscription = None
+            for sub in subscriptions:
+                if sub['name'] == topic_name:
+                    target_subscription = sub
+                    break
+            
+            if target_subscription:
+                # Unsubscribe from shared topic
+                unsubscribe_user_from_topic(session, user_id, target_subscription['shared_topic_id'])
+                
+                # Also remove from legacy topics table if exists
+                legacy_topic = session.query(Topic).filter_by(name=topic_name, user_id=user_id).first()
+                if legacy_topic:
+                    from monitoring.database import Post
+                    posts_count = session.query(Post).filter_by(topic_id=legacy_topic.id).count()
+                    session.query(Post).filter_by(topic_id=legacy_topic.id).delete()
+                    session.delete(legacy_topic)
+                    session.commit()
+                    st.success(f"✅ Unsubscribed from '{topic_name}' and deleted {posts_count} legacy posts!")
+                else:
+                    st.success(f"✅ Unsubscribed from '{topic_name}'!")
+                    
+                # Reset selected topic if it was the deleted one
+                if (hasattr(st.session_state, 'selected_shared_topic') and 
+                    st.session_state.selected_shared_topic == target_subscription['shared_topic_id']):
+                    st.session_state.selected_shared_topic = None
+                    st.session_state.selected_topic = None
+            else:
+                st.error("❌ Topic not found!")
+                
+            session.close()
+            
+        else:
+            # Legacy deletion
+            session = SessionLocal()
+            to_del = session.query(Topic).filter_by(name=topic_name, user_id=user_id).first()
+            if to_del:
+                from monitoring.database import Post
+                posts_count = session.query(Post).filter_by(topic_id=to_del.id).count()
+                session.query(Post).filter_by(topic_id=to_del.id).delete()
+                session.delete(to_del)
+                session.commit()
+                st.success(f"✅ Deleted '{topic_name}' and {posts_count} posts!")
+            else:
+                st.error("❌ Topic not found!")
+            session.close()
+        
+        # Clear session state related to deleted topic
+        keys_to_delete = [key for key in list(st.session_state.keys()) 
+                         if topic_name in key and 'confirm_delete' in key]
+        for key in keys_to_delete:
+            del st.session_state[key]
+        
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"❌ Error deleting topic: {str(e)}")
 
 
 def render_collect_all_section(current_user_id: int):
     """Render the collect all topics section for user's topics only."""
     with st.sidebar.expander("🔄 Data Collection", expanded=False):
-        if st.button("🔄 Collect My Topics Now", type="primary", use_container_width=True):
-            with st.container():
-                st.markdown("**📊 Collection Progress**")
-                collect_user_shared_topics(current_user_id)
+        
+        # Show collection status if in progress
+        if st.session_state.get("collection_in_progress", False):
+            st.info("🔄 Collection running in background...")
+            
+        # Show collection results
+        collection_status = st.session_state.get("collection_status")
+        if collection_status == "success":
+            st.success("✅ Collection completed successfully!")
+            st.session_state.collection_status = None  # Reset
+        elif collection_status == "partial":
+            st.warning("⚠️ Collection completed with some issues.")
+            st.session_state.collection_status = None  # Reset
+        elif collection_status == "failed":
+            st.error(f"❌ Collection failed: {st.session_state.get('collection_error', 'Unknown error')}")
+            st.session_state.collection_status = None  # Reset
+            
+        if st.button("🔄 Collect My Topics Now", type="primary", use_container_width=True, 
+                    disabled=st.session_state.get("collection_in_progress", False)):
+            start_background_collection(current_user_id)
+
+
+def start_background_collection(user_id: int):
+    """Start data collection in background thread."""
+    st.session_state.collection_in_progress = True
+    
+    def collection_worker():
+        try:
+            from monitoring.database import SessionLocal, UserTopicSubscription, SharedTopic
+            
+            session = SessionLocal()
+            
+            # Get user's subscribed shared topics
+            user_subscriptions = (
+                session.query(UserTopicSubscription)
+                .filter(UserTopicSubscription.user_id == user_id)
+                .join(SharedTopic)
+                .all()
+            )
+            
+            if not user_subscriptions:
+                st.session_state.collection_status = "no_topics"
+                session.close()
+                return
+            
+            topic_names = [sub.display_name or sub.shared_topic.name for sub in user_subscriptions]
+            session.close()
+            
+            # Use the global collection for now
+            try:
+                from monitoring.shared_collectors import collect_all_shared_topics_efficiently
+                
+                def progress_callback(message: str):
+                    pass  # Silent background operation
+                
+                result = collect_all_shared_topics_efficiently(progress_callback)
+                
+                if result.get('errors'):
+                    st.session_state.collection_status = "partial"
+                    st.session_state.collection_errors = result['errors']
+                else:
+                    st.session_state.collection_status = "success"
+                    
+            except ImportError:
+                # Fallback to legacy collection
+                from monitoring.collectors import collect_all_topics_efficiently
+                from monitoring.database import Topic
+                
+                session = SessionLocal()
+                user_topics = session.query(Topic).filter(Topic.user_id == user_id).all()
+                session.close()
+                
+                errors = collect_all_topics_efficiently(user_topics)
+                
+                if errors:
+                    st.session_state.collection_status = "partial" 
+                    st.session_state.collection_errors = errors
+                else:
+                    st.session_state.collection_status = "success"
+                    
+        except Exception as e:
+            st.session_state.collection_status = "failed"
+            st.session_state.collection_error = str(e)
+        finally:
+            st.session_state.collection_in_progress = False
+    
+    # Start the thread
+    thread = threading.Thread(target=collection_worker)
+    thread.daemon = True
+    thread.start()
+    st.toast("🚀 Started data collection in background...")
+    st.rerun()
 
 
 def collect_all_shared_topics_ui():
@@ -387,13 +597,43 @@ def send_test_digest_background(test_email, test_topic):
             session.close()
             
             if topic_obj:
-                success = send_test_digest(topic_obj.id, test_email)
+                from monitoring.notifier import create_digest_html, send_email
+                from monitoring.database import Post
+                
+                session_posts = SessionLocal()
+                posts = (
+                    session_posts.query(Post)
+                    .filter_by(topic_id=topic_obj.id)
+                    .order_by(Post.posted_at.desc())
+                    .limit(10)
+                    .all()
+                )
+                
+                posts_data = []
+                for post in posts:
+                    posts_data.append({
+                        'content': post.content,
+                        'url': post.url,
+                        'source': post.source,
+                        'posted_at': post.posted_at,
+                        'likes': post.likes,
+                        'comments': post.comments,
+                        'topic': topic_obj.name
+                    })
+                
+                session_posts.close()
+                
+                if posts_data:
+                    summary = f"Test digest for '{topic_obj.name}' with {len(posts_data)} recent posts."
+                    html_body = create_digest_html(topic_obj.name, posts_data, summary)
+                    success = send_email(test_email, f"📰 Test Digest: {topic_obj.name}", html_body, 'html')
+                else:
+                    success = False
+                
                 if success:
                     st.session_state.test_email_status = "success"
-                    print(f"[DEBUG] Test digest sent to {test_email} successfully.")
                 else:
                     st.session_state.test_email_status = "failure"
-                    print(f"[DEBUG] Failed to send test digest to {test_email}.")
         except Exception as e:
             print(f"[DEBUG] Exception sending test digest: {e}\n{traceback.format_exc()}")
             st.session_state.test_email_status = "failure"
