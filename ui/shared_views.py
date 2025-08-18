@@ -462,7 +462,7 @@ def render_shared_topic_card(subscription: Dict, session):
                 font-weight: 600;
                 box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3);
             ">
-                🔔 {new_posts_count} new posts!
+                {new_posts_count} new posts! 🔔
             </div>
             """), height=60)
         else:
@@ -484,7 +484,19 @@ def render_shared_topic_card(subscription: Dict, session):
     else:
         st.info("No posts collected yet")
     
-    # Apple-style explore button like the original
+    # Apple-style explore button - green when there are new posts
+    if new_posts_count > 0:
+        st.markdown("""
+        <style>
+        div[data-testid="stButton"] button {
+            background: linear-gradient(135deg, #34C759, #30B050) !important;
+            color: white !important;
+            border: none !important;
+            box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3) !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
     if st.button("🔍 **Explore**", key=f"explore_{subscription['subscription_id']}", use_container_width=True, type="primary"):
         st.session_state.selected_shared_topic = subscription['shared_topic_id']
         st.rerun()

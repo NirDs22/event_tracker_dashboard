@@ -9,7 +9,7 @@ from streamlit.components.v1 import html as st_html
 
 from .layout import render_welcome_screen, render_metrics_summary, render_topic_header
 from .charts import create_time_series_chart, create_source_distribution_chart, create_mini_analytics_chart, create_word_cloud, create_source_badges, create_trending_keywords_chart, create_keyword_momentum_chart
-from .cards import render_news_card, render_reddit_card, render_facebook_card, render_youtube_card, render_instagram_card, render_card
+from .cards import render_news_card, render_reddit_card, render_facebook_card, render_youtube_card, render_instagram_card, render_card, render_tldr_button
 from .utils import time_ago, clean_content, _first
 from monitoring.summarizer import summarize, strip_think
 
@@ -141,7 +141,7 @@ def render_overview_page(topics, session, Post, current_user_id: int):
                             font-weight: 600;
                             box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3);
                         ">
-                            🔔 {new_posts_count} new posts!
+                            {new_posts_count} new posts! 🔔
                         </div>
                         """), height=60)
                     else:
@@ -163,7 +163,19 @@ def render_overview_page(topics, session, Post, current_user_id: int):
                 else:
                     st.info("No posts collected yet")
                 
-                # Apple-style explore button
+                # Apple-style explore button - green when there are new posts
+                if new_posts_count > 0:
+                    st.markdown("""
+                    <style>
+                    div[data-testid="stButton"] button {
+                        background: linear-gradient(135deg, #34C759, #30B050) !important;
+                        color: white !important;
+                        border: none !important;
+                        box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3) !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                
                 if st.button("🔍 **Explore**", key=f"open_{topic.id}", use_container_width=True, type="primary"):
                     st.session_state.selected_topic = topic.id
                     st.rerun()
@@ -335,7 +347,7 @@ def render_recent_posts_tab(df, topic):
             current_col = col1 if idx % 2 == 0 else col2
             with current_col:
                 if row["source"] == "news":
-                    render_news_card(row)
+                    render_news_card(row, tab_context="recent")
                 elif row["source"] == "reddit":
                     render_reddit_card(row)
                 elif row["source"] == "facebook":
@@ -363,7 +375,7 @@ def render_news_tab(df):
         for idx, (_, row) in enumerate(news_items.iterrows()):
             current_col = col1 if idx % 2 == 0 else col2
             with current_col:
-                render_news_card(row)
+                render_news_card(row, tab_context="news")
         
         st.markdown("---")
         st.markdown("**📊 News Sources Summary:**")
@@ -577,14 +589,18 @@ def render_analytics_tab(df, topic=None):
 
 def render_twitter_card(tweet):
     """Render a Twitter card."""
+    content = tweet.get('text', tweet.get('content', ''))
     st.markdown(f"""
         <div style='background:rgba(255,255,255,0.7);border-radius:12px;padding:1rem;margin-bottom:1rem;box-shadow:0 2px 8px #0001;'>
-            <div style='font-size:1.1rem;line-height:1.5;'>{py_html.escape(tweet.get('text', tweet.get('content', '')))}</div>
+            <div style='font-size:1.1rem;line-height:1.5;'>{py_html.escape(content)}</div>
             <div style='margin-top:0.5rem;font-size:0.9rem;color:#888;'>
                 <a href='{tweet.get('url','')}' target='_blank'>View on Nitter</a> · {tweet.get('author','')} · {time_ago(tweet['posted_at'] if 'posted_at' in tweet else tweet.get('created_at'))}
             </div>
         </div>
     """, unsafe_allow_html=True)
+    
+    # TL;DR button with AI summary
+    render_tldr_button(content[:100] + "..." if len(content) > 100 else content, content, content_type="Twitter post")
 
 
 def render_generic_card(row, topic):
@@ -596,6 +612,9 @@ def render_generic_card(row, topic):
     age = time_ago(row["posted_at"] if "posted_at" in row else row.get("created_at"))
     source_name = row["source"].title()
     render_card(title, summary, image, age, link, badge=source_name, topic_name=topic.name.title())
+    
+    # TL;DR button with AI summary
+    render_tldr_button(title, summary, content_type=f"{source_name} post")
 
 
 def render_no_content_message(content_type):

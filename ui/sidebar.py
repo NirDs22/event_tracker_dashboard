@@ -107,9 +107,9 @@ def render_add_topic_section(current_user_id: int):
                 )
             
             keywords = st.text_input(
-                "🔍 Keywords", 
+                "🔍 Keywords (Optional)", 
                 placeholder="AI, machine learning, technology",
-                help="Comma-separated keywords to filter content. Use specific terms for better results."
+                help="Optional: Comma-separated keywords to filter content. Leave empty to track all content about this topic."
             )
             profiles = st.text_input(
                 "👥 Social Profiles", 
@@ -122,8 +122,6 @@ def render_add_topic_section(current_user_id: int):
         if submitted:
             if not name:
                 st.error("Please enter a topic name")
-            elif not keywords:
-                st.error("Please enter at least one keyword")
             else:
                 # Start background thread for topic creation and collection
                 create_topic_with_background_collection(name, keywords, profiles, icon, color, current_user_id)
