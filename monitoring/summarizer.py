@@ -16,6 +16,102 @@ SUMMARY_MIN_LENGTH = 40
 
 
 
+def summarize_posts_for_digest(contents: List[str]) -> str:
+    """
+    Create a brief digest summary of posts for email.
+    Focuses on key themes and important developments.
+    """
+    if not contents:
+        return "No recent activity in your monitored topics."
+    
+    # Join content with topic context
+    combined_text = "\n".join(contents)[:MAX_INPUT_LENGTH]
+    
+    try:
+        # Use g4f for digest summarization with a specific prompt
+        import g4f
+        
+        digest_prompt = f"""
+        Please create a brief, informative summary of these recent posts from various monitored topics. 
+        Focus on the most important developments, trends, or news. Keep it concise and engaging for a daily digest email.
+        
+        Content to summarize:
+        {combined_text}
+        
+        Please provide a summary in 2-3 sentences that highlights the key themes and important updates.
+        """
+        
+        # Try multiple models for better reliability
+        models_to_try = [
+            g4f.models.gpt_4o_mini,
+            g4f.models.claude_3_haiku,
+            g4f.models.gemini_pro
+        ]
+        
+        for model in models_to_try:
+            try:
+                response = g4f.ChatCompletion.create(
+                    model=model,
+                    messages=[{"role": "user", "content": digest_prompt}],
+                    timeout=30
+                )
+                
+                if response and len(response.strip()) > 20:
+                    # Clean up the response
+                    summary = response.strip()
+                    # Remove any quotation marks that might wrap the response
+                    summary = summary.strip('"\'')
+                    return summary
+                    
+            except Exception as e:
+                logger.warning(f"Failed to generate digest summary with {model}: {e}")
+                continue
+        
+        # Fallback to basic text processing if AI fails
+        return _generate_basic_digest_summary(contents)
+        
+    except Exception as e:
+        logger.error(f"Error in digest summarization: {e}")
+        return _generate_basic_digest_summary(contents)
+
+
+def _generate_basic_digest_summary(contents: List[str]) -> str:
+    """Generate a basic digest summary without AI."""
+    if not contents:
+        return "No recent activity in your monitored topics."
+    
+    # Extract topics from content
+    topics = set()
+    keywords = []
+    
+    for content in contents:
+        # Extract topic name (format: "Topic: TopicName - content")
+        if "Topic:" in content:
+            topic_part = content.split("Topic:")[1].split(" - ")[0].strip()
+            topics.add(topic_part)
+        
+        # Extract some keywords
+        words = content.lower().split()
+        # Simple keyword extraction (words longer than 4 chars)
+        content_keywords = [w for w in words if len(w) > 4 and w.isalpha()]
+        keywords.extend(content_keywords[:3])  # Top 3 words per post
+    
+    topic_list = list(topics)[:5]  # Max 5 topics
+    
+    if len(topic_list) == 1:
+        summary = f"Latest updates from {topic_list[0]}"
+    elif len(topic_list) <= 3:
+        summary = f"Recent activity in {', '.join(topic_list)}"
+    else:
+        summary = f"Updates across {len(topic_list)} topics including {', '.join(topic_list[:3])}"
+        if len(topic_list) > 3:
+            summary += f" and {len(topic_list) - 3} others"
+    
+    summary += f" with {len(contents)} new posts to review."
+    
+    return summary
+
+
 def summarize(texts: List[str]) -> str:
     """
     Return a concise summary of provided texts using available AI models.

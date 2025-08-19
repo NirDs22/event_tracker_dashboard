@@ -16,7 +16,7 @@ from auth.service import ensure_user_authenticated, get_current_user, AuthResult
 from auth.views import render_auth_panel, render_user_status_widget
 from ui.layout import apply_custom_css, render_main_header
 from ui.sidebar import (
-    render_newsletter_frequency_settings,
+    render_digest_preferences,
     render_digest_email_section,
     render_add_topic_section,
     render_test_email_section,
@@ -87,7 +87,7 @@ def main():
     render_user_status_widget(current_user)
     
     # Render sidebar sections with current user
-    render_newsletter_frequency_settings()
+    render_digest_preferences(current_user)
     render_digest_email_section()
     render_add_topic_section(current_user.id)
     render_test_email_section()

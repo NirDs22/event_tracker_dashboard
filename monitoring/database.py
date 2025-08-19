@@ -33,6 +33,11 @@ class User(Base):
     last_verified_email = Column(String, nullable=True)  # Last email that was verified with code
     last_verification_date = Column(DateTime, nullable=True)  # When it was last verified
     remember_me_enabled = Column(Boolean, default=False, nullable=False)  # Whether user enabled remember me
+    
+    # Daily Digest preferences
+    digest_enabled = Column(Boolean, default=True, nullable=False)  # Whether to send digest emails
+    digest_frequency = Column(String, default='daily', nullable=False)  # daily, every2days, every3days, etc.
+    last_digest_sent = Column(DateTime, nullable=True)  # When digest was last sent to this user
 
     topics = relationship('Topic', back_populates='user', cascade='all, delete-orphan')
     topic_subscriptions = relationship('UserTopicSubscription', back_populates='user', cascade='all, delete-orphan')

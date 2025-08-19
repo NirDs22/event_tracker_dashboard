@@ -11,6 +11,476 @@ from monitoring.collectors import collect_topic, collect_all_topics_efficiently
 from monitoring.secrets import get_secret
 
 
+def render_digest_preferences(user):
+    """Render digest preferences for authenticated users."""
+    if user.is_guest:
+        st.sidebar.markdown("### 📧 Daily Digest")
+        st.sidebar.info("📝 Sign up to receive personalized daily digests!")
+        return
+    
+    st.sidebar.markdown("### 📧 Daily Digest Settings")
+    
+    from monitoring.database import SessionLocal, User
+    
+    # Load current user preferences
+    session = SessionLocal()
+    try:
+        db_user = session.query(User).filter_by(id=user.id).first()
+        current_enabled = getattr(db_user, 'digest_enabled', True) if db_user else True
+        current_frequency = getattr(db_user, 'digest_frequency', 'daily') if db_user else 'daily'
+        
+        # Digest enable/disable toggle
+        digest_enabled = st.sidebar.checkbox(
+            "📬 Enable Daily Digest Emails",
+            value=current_enabled,
+            help="Receive AI-summarized updates about your topics"
+        )
+        
+        if not digest_enabled:
+            st.sidebar.markdown("✉️ *No digest emails will be sent*")
+            
+            # Update database if changed
+            if db_user and db_user.digest_enabled != digest_enabled:
+                db_user.digest_enabled = digest_enabled
+                session.commit()
+                st.sidebar.success("✅ Digest disabled")
+        else:
+            # Frequency selection
+            frequency_options = [
+                ("daily", "Daily"),
+                ("every2days", "Every 2 days"),
+                ("every3days", "Every 3 days"), 
+                ("every4days", "Every 4 days"),
+                ("every5days", "Every 5 days"),
+                ("every6days", "Every 6 days"),
+                ("weekly", "Weekly"),
+                ("monthly", "Monthly")
+            ]
+            
+            frequency_labels = [label for _, label in frequency_options]
+            frequency_values = [value for value, _ in frequency_options]
+            
+            current_index = 0
+            if current_frequency in frequency_values:
+                current_index = frequency_values.index(current_frequency)
+            
+            selected_frequency_label = st.sidebar.selectbox(
+                "📅 Frequency",
+                frequency_labels,
+                index=current_index,
+                help="How often to receive digest emails"
+            )
+            
+            selected_frequency = frequency_values[frequency_labels.index(selected_frequency_label)]
+            
+            # Show next digest estimate
+            if db_user and db_user.last_digest_sent:
+                from datetime import datetime, timedelta
+                next_digest = calculate_next_digest_date(db_user.last_digest_sent, selected_frequency)
+                if next_digest:
+                    days_until = (next_digest - datetime.utcnow()).days
+                    if days_until <= 0:
+                        st.sidebar.info("📮 Next digest: Ready to send!")
+                    else:
+                        st.sidebar.info(f"📅 Next digest: in {days_until} day{'s' if days_until != 1 else ''}")
+            
+            # Send Now button
+            if st.sidebar.button("📤 Send Digest Now", help="Get your latest digest immediately", use_container_width=True):
+                send_user_digest_now(user, session)
+            
+            # Update database if settings changed
+            if db_user:
+                settings_changed = False
+                if db_user.digest_enabled != digest_enabled:
+                    db_user.digest_enabled = digest_enabled
+                    settings_changed = True
+                if db_user.digest_frequency != selected_frequency:
+                    db_user.digest_frequency = selected_frequency
+                    settings_changed = True
+                    
+                if settings_changed:
+                    session.commit()
+                    st.sidebar.success("✅ Settings updated")
+    
+    finally:
+        session.close()
+    
+    st.sidebar.markdown("---")
+
+
+def calculate_next_digest_date(last_sent, frequency):
+    """Calculate when the next digest should be sent."""
+    from datetime import datetime, timedelta
+    
+    if not last_sent:
+        return datetime.utcnow()
+    
+    frequency_map = {
+        'daily': 1,
+        'every2days': 2,
+        'every3days': 3,
+        'every4days': 4,
+        'every5days': 5,
+        'every6days': 6,
+        'weekly': 7,
+        'monthly': 30
+    }
+    
+    days_interval = frequency_map.get(frequency, 1)
+    return last_sent + timedelta(days=days_interval)
+
+
+def send_user_digest_now(user, session=None):
+    """Send digest to user immediately."""
+    close_session = session is None
+    if session is None:
+        from monitoring.database import SessionLocal
+        session = SessionLocal()
+    
+    try:
+        # Set status in session state
+        st.session_state.digest_sending = True
+        st.session_state.digest_status = "sending"
+        
+        # Send in background
+        import threading
+        def digest_worker():
+            try:
+                success = generate_and_send_digest(user.email, user.id)
+                if success:
+                    st.session_state.digest_status = "success"
+                else:
+                    st.session_state.digest_status = "failed"
+            except Exception as e:
+                print(f"Digest sending error: {e}")
+                st.session_state.digest_status = "failed"
+            finally:
+                st.session_state.digest_sending = False
+        
+        thread = threading.Thread(target=digest_worker)
+        thread.daemon = True
+        thread.start()
+        
+        st.sidebar.success("📤 Sending your digest... check back in a moment!")
+        
+    finally:
+        if close_session:
+            session.close()
+
+
+def generate_and_send_digest(user_email, user_id):
+    """Generate and send personalized digest for a user."""
+    try:
+        from monitoring.database import SessionLocal, Topic, Post, SharedTopic, SharedPost
+        from monitoring.notifier import send_email
+        from datetime import datetime, timedelta
+        
+        session = SessionLocal()
+        
+        # Handle sample digest (user_id = 0)
+        if user_id == 0:
+            # Get recent posts from all shared topics for sample
+            three_days_ago = datetime.utcnow() - timedelta(days=3)
+            shared_topics = session.query(SharedTopic).limit(5).all()  # Sample from 5 topics
+            
+            all_posts = []
+            for shared_topic in shared_topics:
+                posts = (
+                    session.query(SharedPost)
+                    .filter_by(shared_topic_id=shared_topic.id)
+                    .filter(SharedPost.posted_at >= three_days_ago)
+                    .order_by(SharedPost.posted_at.desc())
+                    .limit(3)  # Sample posts
+                    .all()
+                )
+                for post in posts:
+                    all_posts.append({
+                        'title': post.title or (post.content[:80] + '...' if post.content and len(post.content) > 80 else post.content),
+                        'content': post.content,
+                        'url': post.url,
+                        'source': post.source,
+                        'posted_at': post.posted_at,
+                        'likes': getattr(post, 'likes', 0),
+                        'comments': getattr(post, 'comments', 0),
+                        'topic': shared_topic.name,
+                        'topic_icon': getattr(shared_topic, 'icon', '📌')
+                    })
+            
+            session.close()
+            
+            # Generate AI summary for sample
+            ai_summary = generate_digest_ai_summary(all_posts) if all_posts else "Sample digest with recent activity from monitored topics."
+            
+            # Create enhanced HTML digest
+            html_body = create_enhanced_digest_html(user_email, all_posts, ai_summary)
+            
+            # Send the email
+            return send_email(user_email, "Sample Daily Digest", html_body, 'html')
+        
+        # Regular user digest
+        # Get user's topics (both personal and shared)
+        user_topics = session.query(Topic).filter_by(user_id=user_id).all()
+        
+        # Get user's shared topic subscriptions  
+        from monitoring.database import UserTopicSubscription
+        shared_subscriptions = session.query(UserTopicSubscription).filter_by(user_id=user_id).all()
+        shared_topic_ids = [sub.shared_topic_id for sub in shared_subscriptions]
+        shared_topics = session.query(SharedTopic).filter(SharedTopic.id.in_(shared_topic_ids)).all() if shared_topic_ids else []
+        
+        # Collect posts from the last 3 days
+        three_days_ago = datetime.utcnow() - timedelta(days=3)
+        
+        all_posts = []
+        
+        # Personal topics
+        for topic in user_topics:
+            posts = (
+                session.query(Post)
+                .filter_by(topic_id=topic.id)
+                .filter(Post.posted_at >= three_days_ago)
+                .order_by(Post.posted_at.desc())
+                .limit(5)  # Limit per topic
+                .all()
+            )
+            for post in posts:
+                all_posts.append({
+                    'title': post.title or (post.content[:80] + '...' if post.content and len(post.content) > 80 else post.content),
+                    'content': post.content,
+                    'url': post.url,
+                    'source': post.source,
+                    'posted_at': post.posted_at,
+                    'likes': getattr(post, 'likes', 0),
+                    'comments': getattr(post, 'comments', 0),
+                    'topic': topic.name,
+                    'topic_icon': topic.icon
+                })
+        
+        # Shared topics
+        for shared_topic in shared_topics:
+            posts = (
+                session.query(SharedPost)
+                .filter_by(shared_topic_id=shared_topic.id)
+                .filter(SharedPost.posted_at >= three_days_ago)
+                .order_by(SharedPost.posted_at.desc())
+                .limit(5)  # Limit per topic
+                .all()
+            )
+            for post in posts:
+                all_posts.append({
+                    'title': post.title or (post.content[:80] + '...' if post.content and len(post.content) > 80 else post.content),
+                    'content': post.content,
+                    'url': post.url,
+                    'source': post.source,
+                    'posted_at': post.posted_at,
+                    'likes': getattr(post, 'likes', 0),
+                    'comments': getattr(post, 'comments', 0),
+                    'topic': shared_topic.name,
+                    'topic_icon': getattr(shared_topic, 'icon', '📌')
+                })
+        
+        session.close()
+        
+        if not all_posts:
+            print(f"No recent posts found for user {user_email}")
+            # Still send an email saying no new content
+            html_body = create_enhanced_digest_html(user_email, [], "")
+            return send_email(user_email, "Daily Digest", html_body, 'html')
+        
+        # Generate AI summary for the posts
+        ai_summary = generate_digest_ai_summary(all_posts)
+        
+        # Create enhanced HTML digest
+        html_body = create_enhanced_digest_html(user_email, all_posts, ai_summary)
+        
+        # Send the email
+        success = send_email(user_email, "Daily Digest", html_body, 'html')
+        
+        if success and user_id != 0:
+            # Update last digest sent timestamp (only for real users, not samples)
+            session = SessionLocal()
+            try:
+                from monitoring.database import User
+                user = session.query(User).filter_by(id=user_id).first()
+                if user:
+                    user.last_digest_sent = datetime.utcnow()
+                    session.commit()
+            finally:
+                session.close()
+        
+        return success
+        
+    except Exception as e:
+        print(f"Error generating digest: {e}")
+        return False
+
+
+def generate_digest_ai_summary(posts):
+    """Generate AI summary of posts for digest."""
+    if not posts:
+        return ""
+    
+    try:
+        # Collect content for summarization
+        contents = []
+        for post in posts:
+            if post.get('content'):
+                content_snippet = f"Topic: {post['topic']} - {post['content'][:200]}"
+                contents.append(content_snippet)
+        
+        if not contents:
+            return "Recent activity detected across your monitored topics."
+        
+        # Use the existing summarizer
+        from monitoring.summarizer import summarize_posts_for_digest
+        if hasattr(__import__('monitoring.summarizer'), 'summarize_posts_for_digest'):
+            summary = summarize_posts_for_digest(contents[:10])  # Limit to prevent token overflow
+        else:
+            # Fallback to basic summary
+            topics = list(set([post['topic'] for post in posts]))
+            summary = f"Recent activity across {len(topics)} topics: {', '.join(topics[:5])}"
+            if len(topics) > 5:
+                summary += f" and {len(topics) - 5} more topics"
+        
+        return summary
+        
+    except Exception as e:
+        print(f"Error generating AI summary: {e}")
+        return f"Recent updates from {len(set([post['topic'] for post in posts]))} topics you're following."
+
+
+def create_enhanced_digest_html(user_email, posts, ai_summary):
+    """Create enhanced HTML digest email."""
+    from datetime import datetime
+    from collections import defaultdict
+    
+    # Group posts by topic
+    topic_posts = defaultdict(list)
+    for post in posts:
+        topic_name = post.get('topic', 'General')
+        topic_posts[topic_name].append(post)
+    
+    # Sort topics by post count (most active first)
+    sorted_topics = sorted(topic_posts.items(), key=lambda x: len(x[1]), reverse=True)
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Your Daily Digest | Tracker Dashboard</title>
+        <style>
+            body {{ font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.6; color: #333; max-width: 700px; margin: 0 auto; padding: 20px; background: #f8f9fa; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 25px; border-radius: 15px; text-align: center; margin-bottom: 30px; box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3); }}
+            .header h1 {{ font-size: 2rem; margin: 0 0 8px 0; font-weight: 600; }}
+            .header p {{ font-size: 1.1rem; margin: 0; opacity: 0.9; }}
+            .ai-summary {{ background: linear-gradient(135deg, #e8f5e8 0%, #f0f8ff 100%); border-left: 4px solid #4caf50; border-radius: 10px; padding: 20px; margin: 25px 0; }}
+            .ai-summary h3 {{ margin: 0 0 12px 0; color: #2e7d2e; font-size: 1.2rem; }}
+            .ai-summary p {{ margin: 0; font-size: 1.05rem; line-height: 1.7; }}
+            .topic-section {{ background: white; border-radius: 12px; margin: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.05); overflow: hidden; }}
+            .topic-header {{ background: #f8f9fa; padding: 18px 25px; border-bottom: 1px solid #e9ecef; }}
+            .topic-title {{ font-size: 1.3rem; font-weight: 600; color: #495057; margin: 0; }}
+            .topic-icon {{ font-size: 1.4rem; margin-right: 10px; }}
+            .post-item {{ padding: 20px 25px; border-bottom: 1px solid #f1f3f5; }}
+            .post-item:last-child {{ border-bottom: none; }}
+            .post-title {{ font-size: 1.1rem; font-weight: 500; color: #2c3e50; margin: 0 0 8px 0; }}
+            .post-meta {{ font-size: 0.9rem; color: #6c757d; margin: 0 0 12px 0; }}
+            .post-link {{ display: inline-block; background: #007bff; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: 0.9rem; font-weight: 500; }}
+            .post-link:hover {{ background: #0056b3; }}
+            .stats {{ font-size: 0.85rem; color: #868e96; margin: 8px 0 0 0; }}
+            .no-posts {{ text-align: center; padding: 40px; color: #6c757d; font-style: italic; }}
+            .footer {{ text-align: center; margin-top: 40px; padding: 25px; background: white; border-radius: 12px; }}
+            .footer-button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; margin: 10px 0; }}
+            .footer-text {{ font-size: 0.9rem; color: #6c757d; margin: 15px 0 0 0; line-height: 1.5; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>📊 Your Daily Digest</h1>
+            <p>{datetime.now().strftime('%A, %B %d, %Y')}</p>
+        </div>
+    """
+    
+    # AI Summary section
+    if ai_summary:
+        html += f"""
+        <div class="ai-summary">
+            <h3>🤖 AI Summary</h3>
+            <p>{ai_summary}</p>
+        </div>
+        """
+    
+    # Posts by topic
+    if sorted_topics:
+        html += f"<p style='font-size: 1.1rem; color: #495057; margin: 20px 0;'><strong>📈 {len(posts)} new updates across {len(sorted_topics)} topics:</strong></p>"
+        
+        for topic_name, topic_posts_list in sorted_topics:
+            # Get topic icon from first post
+            topic_icon = topic_posts_list[0].get('topic_icon', '📌')
+            
+            html += f"""
+            <div class="topic-section">
+                <div class="topic-header">
+                    <div class="topic-title">
+                        <span class="topic-icon">{topic_icon}</span>
+                        {topic_name} ({len(topic_posts_list)} updates)
+                    </div>
+                </div>
+            """
+            
+            for post in topic_posts_list:
+                title = post.get('title', 'Untitled')
+                content_preview = post.get('content', '')[:150]
+                if len(post.get('content', '')) > 150:
+                    content_preview += '...'
+                
+                url = post.get('url', '#')
+                source = post.get('source', 'Unknown')
+                posted_at = post.get('posted_at')
+                likes = post.get('likes', 0)
+                comments = post.get('comments', 0)
+                
+                time_str = posted_at.strftime('%b %d, %I:%M %p') if posted_at else 'Recent'
+                
+                html += f"""
+                <div class="post-item">
+                    <div class="post-title">{title}</div>
+                    <div class="post-meta">📅 {time_str} • 📱 {source}</div>
+                    <p style="margin: 0 0 12px 0; color: #495057; line-height: 1.5;">{content_preview}</p>
+                    <a href="{url}" class="post-link" target="_blank">Read More →</a>
+                    <div class="stats">❤️ {likes} likes • 💬 {comments} comments</div>
+                </div>
+                """
+            
+            html += "</div>"
+    else:
+        html += """
+        <div class="topic-section">
+            <div class="no-posts">
+                <h3>📭 No new updates</h3>
+                <p>No new posts found in your monitored topics over the last 3 days.</p>
+                <p>Check back tomorrow or add more topics to track!</p>
+            </div>
+        </div>
+        """
+    
+    # Footer with call-to-action
+    html += f"""
+        <div class="footer">
+            <a href="https://nird-tracker.streamlit.app" class="footer-button" target="_blank">
+                🚀 View Full Dashboard
+            </a>
+            <p class="footer-text">
+                This digest was automatically generated by your Tracker Dashboard.<br>
+                To modify your digest preferences or unsubscribe, visit your dashboard settings.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html
+
+
 def render_newsletter_frequency_settings():
     """Render newsletter frequency settings."""
     st.sidebar.markdown("### 📧 Newsletter Settings")
@@ -49,8 +519,9 @@ def render_newsletter_frequency_settings():
 
 
 def render_digest_email_section():
-    """Render the digest email section."""
-    with st.sidebar.expander("📧 Send Digest Mail Now (All Topics)", expanded=False):
+    """Render the digest email section for sending to any email (admin functionality)."""
+    with st.sidebar.expander("📧 Send Digest to Any Email", expanded=False):
+        st.markdown("*Admin tool: Send digest to any email address*")
         digest_email = st.text_input("Target Email Address", key="digest_all_email")
         
         # Track email sending status in session state
@@ -65,17 +536,37 @@ def render_digest_email_section():
         
         # Show results of previous send operation
         if st.session_state.email_status == "success":
-            st.success(f"✅ Full digest sent to {st.session_state.get('last_email', '')}!")
+            st.success(f"✅ Digest sent to {st.session_state.get('last_email', '')}!")
             st.session_state.email_status = None  # Reset after showing
         elif st.session_state.email_status == "failure":
             st.error(f"❌ Failed to send digest to {st.session_state.get('last_email', '')}.")
             st.session_state.email_status = None  # Reset after showing
             
-        if st.button("Send Full Digest Now", key="digest_all_btn", disabled=st.session_state.email_sending):
+        if st.button("📤 Send Sample Digest", key="digest_all_btn", disabled=st.session_state.email_sending):
             if not digest_email:
                 st.warning("Please enter an email address.")
             else:
-                send_digest_email_background(digest_email)
+                # Send using the new enhanced digest system
+                import threading
+                def send_sample_digest():
+                    try:
+                        # Use the new digest generation with a dummy user ID
+                        success = generate_and_send_digest(digest_email, user_id=0)  # 0 for sample
+                        st.session_state.last_email = digest_email
+                        if success:
+                            st.session_state.email_status = "success"
+                        else:
+                            st.session_state.email_status = "failure"
+                    except Exception as e:
+                        print(f"Error sending sample digest: {e}")
+                        st.session_state.email_status = "failure"
+                    finally:
+                        st.session_state.email_sending = False
+                
+                st.session_state.email_sending = True
+                thread = threading.Thread(target=send_sample_digest)
+                thread.daemon = True
+                thread.start()
     
     st.sidebar.markdown("---")
 
