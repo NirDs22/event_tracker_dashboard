@@ -7,10 +7,18 @@ from plotly.subplots import make_subplots
 import streamlit as st
 from pathlib import Path
 import re
-from wordcloud import WordCloud
 from collections import Counter
 from datetime import datetime, timedelta
 import html as py_html
+
+# Try to import WordCloud with fallback
+try:
+    from wordcloud import WordCloud
+    WORDCLOUD_AVAILABLE = True
+except ImportError as e:
+    st.warning(f"WordCloud not available: {e}. Word cloud features will be disabled.")
+    WORDCLOUD_AVAILABLE = False
+    WordCloud = None
 
 
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
@@ -185,6 +193,16 @@ def create_mini_analytics_chart(posts: list, topic_color: str) -> None:
 
 def create_word_cloud(text: str) -> None:
     """Create and display a word cloud from the given text."""
+    if not WORDCLOUD_AVAILABLE:
+        st.info("📊 Word cloud feature is not available in this environment. Showing text summary instead.")
+        # Show a simple text summary as fallback
+        if text.strip():
+            words = text.split()
+            word_count = len(words)
+            unique_words = len(set(words))
+            st.metric("Word Analysis", f"{word_count} total words, {unique_words} unique")
+        return
+        
     if not text.strip():
         st.info("No text available for word cloud generation.")
         return
@@ -202,6 +220,12 @@ def create_word_cloud(text: str) -> None:
         st.image(wc.to_array(), use_container_width=True)
     except Exception as e:
         st.error(f"Could not generate word cloud: {e}")
+        # Fallback to simple word frequency display
+        if text.strip():
+            words = text.split()
+            word_count = len(words)
+            unique_words = len(set(words))
+            st.metric("Word Analysis (Fallback)", f"{word_count} total words, {unique_words} unique")
 
 
 def create_source_badges(posts: list) -> str:
@@ -218,9 +242,69 @@ def create_source_badges(posts: list) -> str:
     return source_badges
 
 
+# Try to import NLTK with fallback
+try:
+    import nltk
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+    nltk = None
+
+def _extract_keywords_simple_fallback(posts_data, min_length=3, max_keywords=20):
+    """Simple keyword extraction without NLTK."""
+    from collections import defaultdict
+    import re
+    
+    # Filter posts to last 3 months
+    cutoff_date = datetime.now() - timedelta(days=90)
+    filtered_posts = []
+    for post in posts_data:
+        post_date = post.get('posted_at')
+        if post_date:
+            if isinstance(post_date, str):
+                try:
+                    post_date = pd.to_datetime(post_date)
+                except:
+                    continue
+            if post_date.date() >= cutoff_date.date():
+                filtered_posts.append(post)
+    
+    if not filtered_posts:
+        return {}, {}
+    
+    # Simple word extraction
+    word_freq = defaultdict(int)
+    hashtag_freq = defaultdict(int)
+    
+    # Basic stopwords
+    stop_words = {'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our', 'their', 'a', 'an', 'as', 'if', 'so', 'than', 'too', 'very', 'just', 'now'}
+    
+    for post in filtered_posts:
+        content = str(post.get('content', '')) + ' ' + str(post.get('title', ''))
+        
+        # Extract hashtags
+        hashtags = re.findall(r'#\w+', content)
+        for hashtag in hashtags:
+            hashtag_freq[hashtag.lower()] += 1
+        
+        # Extract words (simple approach)
+        words = re.findall(r'\b\w+\b', content.lower())
+        for word in words:
+            if len(word) >= min_length and word not in stop_words and not word.isdigit():
+                word_freq[word] += 1
+    
+    # Get top keywords
+    top_keywords = dict(sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:max_keywords])
+    top_hashtags = dict(sorted(hashtag_freq.items(), key=lambda x: x[1], reverse=True)[:max_keywords])
+    
+    return top_keywords, top_hashtags
+
 def extract_keywords_and_hashtags(posts_data, min_length=3, max_keywords=20):
     """Extract trending keywords and hashtags from posts (last 3 months only)."""
-    import nltk
+    if not NLTK_AVAILABLE:
+        # Simple fallback without NLTK
+        return _extract_keywords_simple_fallback(posts_data, min_length, max_keywords)
+    
     from collections import defaultdict
     
     # Filter posts to last 3 months
