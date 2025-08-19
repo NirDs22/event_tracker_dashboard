@@ -88,6 +88,74 @@ def render_digest_preferences(user):
             if st.sidebar.button("📤 Send Digest Now", help="Get your latest digest immediately", use_container_width=True):
                 send_user_digest_now(user, session)
             
+            # Check for completed digest tasks
+            if hasattr(st.session_state, 'digest_results') and hasattr(st.session_state, 'current_digest_task'):
+                task_id = st.session_state.current_digest_task
+                if task_id in st.session_state.digest_results:
+                    # Task completed, process result
+                    result = st.session_state.digest_results[task_id]
+                    
+                    # Update status based on result
+                    if isinstance(result, dict):
+                        if result.get('success'):
+                            st.session_state.digest_status = "success"
+                            st.session_state.digest_message = result.get('message', 'Digest sent successfully!')
+                        else:
+                            status = result.get('status', 'failed')
+                            if status == 'cooldown':
+                                st.session_state.digest_status = "cooldown"
+                            else:
+                                st.session_state.digest_status = "failed"
+                            st.session_state.digest_message = result.get('message', 'Failed to send digest.')
+                    else:
+                        # Legacy boolean return
+                        if result:
+                            st.session_state.digest_status = "success"
+                            st.session_state.digest_message = "Digest sent successfully!"
+                        else:
+                            st.session_state.digest_status = "failed"
+                            st.session_state.digest_message = "Failed to send digest."
+                    
+                    # Clean up
+                    st.session_state.digest_sending = False
+                    del st.session_state.digest_results[task_id]
+                    del st.session_state.current_digest_task
+            
+            # Show digest status if available
+            if hasattr(st.session_state, 'digest_sending') and st.session_state.digest_sending:
+                st.sidebar.info("📤 Sending your digest... check back in a moment!")
+            elif hasattr(st.session_state, 'digest_status'):
+                status = st.session_state.digest_status
+                message = getattr(st.session_state, 'digest_message', '')
+                
+                if status == "success":
+                    st.sidebar.success(f"✅ {message}")
+                    # Clear status after showing
+                    delattr(st.session_state, 'digest_status')
+                    if hasattr(st.session_state, 'digest_message'):
+                        delattr(st.session_state, 'digest_message')
+                elif status == "cooldown":
+                    st.sidebar.warning(f"⏰ {message}")
+                    # Show override option
+                    if st.sidebar.button("🚀 Send Anyway (Override Cooldown)", 
+                                       help="Force send digest ignoring the 1-hour cooldown", 
+                                       use_container_width=True):
+                        # Remove cooldown file to allow sending
+                        import pathlib
+                        cooldown_file = pathlib.Path(".last_digest_sent")
+                        if cooldown_file.exists():
+                            cooldown_file.unlink()
+                            st.sidebar.success("Cooldown removed! Click 'Send Digest Now' again.")
+                        delattr(st.session_state, 'digest_status')
+                        if hasattr(st.session_state, 'digest_message'):
+                            delattr(st.session_state, 'digest_message')
+                elif status == "failed":
+                    st.sidebar.error(f"❌ {message}")
+                    # Clear status after showing
+                    delattr(st.session_state, 'digest_status')
+                    if hasattr(st.session_state, 'digest_message'):
+                        delattr(st.session_state, 'digest_message')
+            
             # Update database if settings changed
             if db_user:
                 settings_changed = False
@@ -142,26 +210,38 @@ def send_user_digest_now(user, session=None):
         st.session_state.digest_sending = True
         st.session_state.digest_status = "sending"
         
+        # Initialize result storage
+        if not hasattr(st.session_state, 'digest_results'):
+            st.session_state.digest_results = {}
+        
+        # Generate a unique task ID for this digest request
+        import time
+        task_id = f"digest_{int(time.time() * 1000)}"
+        
         # Send in background
         import threading
         def digest_worker():
             try:
-                success = generate_and_send_digest(user.email, user.id)
-                if success:
-                    st.session_state.digest_status = "success"
-                else:
-                    st.session_state.digest_status = "failed"
+                result = generate_and_send_digest(user.email, user.id)
+                # Store result without accessing st.session_state directly
+                if hasattr(st.session_state, 'digest_results'):
+                    st.session_state.digest_results[task_id] = result
             except Exception as e:
                 print(f"Digest sending error: {e}")
-                st.session_state.digest_status = "failed"
-            finally:
-                st.session_state.digest_sending = False
+                # Store error result
+                if hasattr(st.session_state, 'digest_results'):
+                    st.session_state.digest_results[task_id] = {
+                        'success': False,
+                        'status': 'failed',
+                        'message': f"Error: {str(e)}"
+                    }
         
         thread = threading.Thread(target=digest_worker)
         thread.daemon = True
         thread.start()
         
-        st.sidebar.success("📤 Sending your digest... check back in a moment!")
+        # Store task ID for checking later
+        st.session_state.current_digest_task = task_id
         
     finally:
         if close_session:
@@ -215,7 +295,8 @@ def generate_and_send_digest(user_email, user_id):
             html_body = create_enhanced_digest_html(user_email, all_posts, ai_summary)
             
             # Send the email
-            return send_email(user_email, "Sample Daily Digest", html_body, 'html')
+            result = send_email(user_email, "Sample Daily Digest", html_body, 'html')
+            return result
         
         # Regular user digest
         # Get user's topics (both personal and shared)
@@ -284,7 +365,8 @@ def generate_and_send_digest(user_email, user_id):
             print(f"No recent posts found for user {user_email}")
             # Still send an email saying no new content
             html_body = create_enhanced_digest_html(user_email, [], "")
-            return send_email(user_email, "Daily Digest", html_body, 'html')
+            result = send_email(user_email, "Daily Digest", html_body, 'html')
+            return result
         
         # Generate AI summary for the posts
         ai_summary = generate_digest_ai_summary(all_posts)
@@ -293,9 +375,9 @@ def generate_and_send_digest(user_email, user_id):
         html_body = create_enhanced_digest_html(user_email, all_posts, ai_summary)
         
         # Send the email
-        success = send_email(user_email, "Daily Digest", html_body, 'html')
+        result = send_email(user_email, "Daily Digest", html_body, 'html')
         
-        if success and user_id != 0:
+        if result.get('success') and user_id != 0:
             # Update last digest sent timestamp (only for real users, not samples)
             session = SessionLocal()
             try:
@@ -307,7 +389,7 @@ def generate_and_send_digest(user_email, user_id):
             finally:
                 session.close()
         
-        return success
+        return result
         
     except Exception as e:
         print(f"Error generating digest: {e}")

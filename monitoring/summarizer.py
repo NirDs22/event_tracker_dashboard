@@ -32,20 +32,22 @@ def summarize_posts_for_digest(contents: List[str]) -> str:
         import g4f
         
         digest_prompt = f"""
-        Please create a brief, informative summary of these recent posts from various monitored topics. 
-        Focus on the most important developments, trends, or news. Keep it concise and engaging for a daily digest email.
+        Create a very short summary of these posts organized by topic. Only include the most important/newsworthy points. Format as:
+
+        **Topic Name**: Key point or development
+        **Another Topic**: Important update
+
+        Keep each point to 1 short sentence. Maximum 3-4 topics total. Skip boring or routine content.
         
         Content to summarize:
         {combined_text}
-        
-        Please provide a summary in 2-3 sentences that highlights the key themes and important updates.
         """
         
         # Try multiple models for better reliability
         models_to_try = [
             g4f.models.gpt_4o_mini,
-            g4f.models.claude_3_haiku,
-            g4f.models.gemini_pro
+            g4f.models.gemini_pro,
+            g4f.models.claude_3_5_sonnet
         ]
         
         for model in models_to_try:
@@ -76,40 +78,44 @@ def summarize_posts_for_digest(contents: List[str]) -> str:
 
 
 def _generate_basic_digest_summary(contents: List[str]) -> str:
-    """Generate a basic digest summary without AI."""
+    """Generate a basic digest summary without AI, organized by topics."""
     if not contents:
         return "No recent activity in your monitored topics."
     
-    # Extract topics from content
-    topics = set()
-    keywords = []
+    # Extract topics and their key content
+    topic_summaries = {}
     
     for content in contents:
         # Extract topic name (format: "Topic: TopicName - content")
-        if "Topic:" in content:
-            topic_part = content.split("Topic:")[1].split(" - ")[0].strip()
-            topics.add(topic_part)
-        
-        # Extract some keywords
-        words = content.lower().split()
-        # Simple keyword extraction (words longer than 4 chars)
-        content_keywords = [w for w in words if len(w) > 4 and w.isalpha()]
-        keywords.extend(content_keywords[:3])  # Top 3 words per post
+        if "Topic:" in content and " - " in content:
+            parts = content.split("Topic:")[1].split(" - ", 1)
+            if len(parts) >= 2:
+                topic_name = parts[0].strip()
+                topic_content = parts[1].strip()
+                
+                if topic_name not in topic_summaries:
+                    topic_summaries[topic_name] = []
+                
+                # Extract first meaningful sentence
+                sentences = [s.strip() for s in topic_content.split('.') if s.strip() and len(s.strip()) > 20]
+                if sentences:
+                    topic_summaries[topic_name].append(sentences[0])
     
-    topic_list = list(topics)[:5]  # Max 5 topics
+    if not topic_summaries:
+        return f"Recent activity across your monitored topics with {len(contents)} new posts to review."
     
-    if len(topic_list) == 1:
-        summary = f"Latest updates from {topic_list[0]}"
-    elif len(topic_list) <= 3:
-        summary = f"Recent activity in {', '.join(topic_list)}"
+    # Format as topic-organized summary
+    summary_parts = []
+    for topic, content_list in list(topic_summaries.items())[:4]:  # Max 4 topics
+        if content_list:
+            # Take the most relevant content
+            key_content = content_list[0][:100]  # Limit length
+            summary_parts.append(f"**{topic}**: {key_content}")
+    
+    if summary_parts:
+        return "\n".join(summary_parts)
     else:
-        summary = f"Updates across {len(topic_list)} topics including {', '.join(topic_list[:3])}"
-        if len(topic_list) > 3:
-            summary += f" and {len(topic_list) - 3} others"
-    
-    summary += f" with {len(contents)} new posts to review."
-    
-    return summary
+        return f"Recent updates across {len(topic_summaries)} topics with new posts to review."
 
 
 def summarize(texts: List[str]) -> str:

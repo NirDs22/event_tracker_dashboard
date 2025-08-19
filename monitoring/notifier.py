@@ -7,16 +7,11 @@ from monitoring.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
-def send_email(to_email: str, subject: str, body: str, body_type: str = 'html') -> bool:
+def send_email(to_email: str, subject: str, body: str, body_type: str = 'text'):
     """
-    Send an email using Gmail SMTP with Brevo fallback.
-    Args:
-        to_email: Recipient email address
-        subject: Email subject line
-        body: Email body content
-        body_type: 'html' or 'plain' for email format
+    Send email with digest content, respecting cooldown period.
     Returns:
-        True if email sent successfully, False only for real errors
+        dict: {'success': bool, 'status': str, 'message': str}
     """
     from monitoring.email_sender import send_email as send_email_new
     
@@ -32,9 +27,14 @@ def send_email(to_email: str, subject: str, body: str, body_type: str = 'html') 
         except Exception:
             last_sent_ts = None
     if last_sent_ts and (now_ts - last_sent_ts) < 3600:
+        minutes_remaining = 60 - ((now_ts - last_sent_ts) // 60)
         logger.warning("Digest email was sent less than an hour ago. Aborting send.")
         print("[DEBUG] Digest email was sent less than an hour ago. Aborting send.")
-        return False
+        return {
+            'success': False, 
+            'status': 'cooldown', 
+            'message': f'Please wait {minutes_remaining} more minutes before sending another digest.'
+        }
     
     # Set subject to Tracker Dashboard - Daily Digest (date)
     today_str = datetime.now().strftime('%B %d, %Y')
@@ -62,11 +62,11 @@ def send_email(to_email: str, subject: str, body: str, body_type: str = 'html') 
         
         logger.info(f"Email sent successfully to {to_email}")
         print(f"[DEBUG] Email sent successfully to {to_email}")
-        return True
+        return {'success': True, 'status': 'sent', 'message': 'Digest email sent successfully!'}
     else:
         logger.error(f"Failed to send email to {to_email}")
         print(f"[DEBUG] Failed to send email to {to_email}")
-        return False
+        return {'success': False, 'status': 'failed', 'message': 'Failed to send digest email. Please try again later.'}
 
 
 def send_otp_email(to_email: str, code: str) -> bool:
