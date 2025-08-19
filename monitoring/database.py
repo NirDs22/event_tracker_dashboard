@@ -28,6 +28,11 @@ class User(Base):
     is_guest = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, nullable=True)
+    
+    # Remember me functionality
+    last_verified_email = Column(String, nullable=True)  # Last email that was verified with code
+    last_verification_date = Column(DateTime, nullable=True)  # When it was last verified
+    remember_me_enabled = Column(Boolean, default=False, nullable=False)  # Whether user enabled remember me
 
     topics = relationship('Topic', back_populates='user', cascade='all, delete-orphan')
     topic_subscriptions = relationship('UserTopicSubscription', back_populates='user', cascade='all, delete-orphan')

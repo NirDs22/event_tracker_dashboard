@@ -103,12 +103,40 @@ def get_current_user(session=None) -> Optional[User]:
             session.close()
 
 
-def initiate_login(email: str, is_guest: bool = False, is_upgrade: bool = False) -> LoginResult:
+def can_skip_verification(email: str) -> bool:
+    """Check if a user can skip verification due to remember me feature."""
+    session = SessionLocal()
+    
+    try:
+        email = email.lower().strip()
+        user = session.query(User).filter_by(email=email).first()
+        
+        if not user or not user.remember_me_enabled:
+            return False
+        
+        # Check if the email was verified recently (within 30 days)
+        if not user.last_verification_date:
+            return False
+        
+        from datetime import timedelta
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        
+        return (user.last_verified_email == email and 
+                user.last_verification_date > thirty_days_ago)
+        
+    except Exception as e:
+        print(f"Error checking remember me status: {e}")
+        return False
+    finally:
+        session.close()
+
+
+def initiate_login(email: str, is_guest: bool = False, is_upgrade: bool = False, remember_me: bool = False) -> LoginResult:
     """Initiate login process - either guest or email-based."""
     if is_guest:
         return _create_guest_login()
     else:
-        return _start_email_login(email, is_upgrade)
+        return _start_email_login(email, is_upgrade, remember_me)
 
 
 def _create_guest_login() -> LoginResult:
@@ -121,11 +149,11 @@ def _create_guest_login() -> LoginResult:
         return LoginResult(success=False, message=f"Failed to create guest account: {str(e)}")
 
 
-def _start_email_login(email: str, is_upgrade: bool = False) -> LoginResult:
+def _start_email_login(email: str, is_upgrade: bool = False, remember_me: bool = False) -> LoginResult:
     """Start email-based login process."""
     try:
-        print(f"DEBUG: _start_email_login called with email='{email}'")
-        success = start_login(email)
+        print(f"DEBUG: _start_email_login called with email='{email}', remember_me={remember_me}")
+        success = start_login(email, remember_me=remember_me)
         print(f"DEBUG: start_login returned: {success}")
         if success:
             return LoginResult(success=True, message="Verification code sent")
@@ -136,7 +164,7 @@ def _start_email_login(email: str, is_upgrade: bool = False) -> LoginResult:
         return LoginResult(success=False, message=f"Login failed: {str(e)}")
 
 
-def complete_login(email: str, code: str) -> LoginResult:
+def complete_login(email: str, code: str, remember_me: bool = False, skip_verification: bool = False) -> LoginResult:
     """Complete the login process with verification code."""
     try:
         # Get current guest user if exists for potential upgrade
@@ -145,23 +173,79 @@ def complete_login(email: str, code: str) -> LoginResult:
         if current_token:
             current_guest_id = int(current_token.split('_')[1]) if '_' in current_token else None
         
-        print(f"DEBUG: complete_login called with email='{email}', code='{code}'")
-        user_id = _complete_login_internal(email, code, current_guest_id)
-        print(f"DEBUG: _complete_login_internal returned user_id={user_id}")
+        print(f"DEBUG: complete_login called with email='{email}', code='{code}', remember_me={remember_me}, skip_verification={skip_verification}")
+        
+        if skip_verification:
+            # Skip verification for remember me users
+            user_id = _handle_remember_me_login(email, current_guest_id)
+        else:
+            # Normal verification flow
+            user_id = _complete_login_internal(email, code, current_guest_id, remember_me)
+        
+        print(f"DEBUG: Login process returned user_id={user_id}")
         
         if user_id:
             set_auth_token(str(user_id))  # Just pass the user ID, set_auth_token will handle token creation
             print(f"DEBUG: Auth token set for user {user_id}")
             return LoginResult(success=True, user_id=user_id, message="Successfully logged in")
         else:
-            print("DEBUG: Login failed - invalid verification code")
-            return LoginResult(success=False, message="Invalid verification code")
+            print("DEBUG: Login failed - invalid verification code or remember me check failed")
+            return LoginResult(success=False, message="Invalid verification code" if not skip_verification else "Login failed")
     except Exception as e:
         print(f"DEBUG: Login exception: {str(e)}")
         return LoginResult(success=False, message=f"Login failed: {str(e)}")
 
 
-def start_login(email: str) -> bool:
+def _handle_remember_me_login(email: str, current_guest_user_id: Optional[int] = None) -> Optional[int]:
+    """Handle login for remember me users without verification code."""
+    session = SessionLocal()
+    
+    try:
+        email = email.lower().strip()
+        print(f"DEBUG: _handle_remember_me_login called with email='{email}'")
+        
+        user = session.query(User).filter_by(email=email).first()
+        
+        if not user:
+            print("DEBUG: No user found for remember me login")
+            return None
+        
+        if not user.remember_me_enabled:
+            print("DEBUG: Remember me not enabled for this user")
+            return None
+        
+        # Verify remember me is still valid (within 30 days)
+        if not user.last_verification_date:
+            print("DEBUG: No last verification date found")
+            return None
+        
+        from datetime import timedelta
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        
+        if user.last_verification_date <= thirty_days_ago:
+            print("DEBUG: Remember me period has expired")
+            return None
+        
+        if user.last_verified_email != email:
+            print("DEBUG: Email doesn't match last verified email")
+            return None
+        
+        # Update last login
+        user.last_login = datetime.utcnow()
+        session.commit()
+        
+        print(f"DEBUG: Remember me login successful for user {user.id}")
+        return user.id
+        
+    except Exception as e:
+        session.rollback()
+        print(f"Error in _handle_remember_me_login: {e}")
+        return None
+    finally:
+        session.close()
+
+
+def start_login(email: str, remember_me: bool = False) -> bool:
     """Start the login process by generating and sending a 6-digit code."""
     session = SessionLocal()
     
@@ -210,7 +294,7 @@ def start_login(email: str) -> bool:
         session.close()
 
 
-def _complete_login_internal(email: str, code: str, current_guest_user_id: Optional[int] = None) -> Optional[int]:
+def _complete_login_internal(email: str, code: str, current_guest_user_id: Optional[int] = None, remember_me: bool = False) -> Optional[int]:
     """Complete the login process by verifying the code and returning user ID."""
     session = SessionLocal()
     
@@ -264,6 +348,13 @@ def _complete_login_internal(email: str, code: str, current_guest_user_id: Optio
             # Update existing user
             user.is_guest = False
             user.last_login = datetime.utcnow()
+            
+            # Handle remember me functionality
+            if remember_me:
+                user.remember_me_enabled = True
+                user.last_verified_email = email
+                user.last_verification_date = datetime.utcnow()
+                print(f"DEBUG: Remember me enabled for user {user.id}")
         else:
             # Check if we should upgrade a guest user
             if current_guest_user_id:
@@ -273,6 +364,14 @@ def _complete_login_internal(email: str, code: str, current_guest_user_id: Optio
                     guest_user.email = email
                     guest_user.is_guest = False
                     guest_user.last_login = datetime.utcnow()
+                    
+                    # Handle remember me functionality
+                    if remember_me:
+                        guest_user.remember_me_enabled = True
+                        guest_user.last_verified_email = email
+                        guest_user.last_verification_date = datetime.utcnow()
+                        print(f"DEBUG: Remember me enabled for upgraded guest user {guest_user.id}")
+                    
                     user = guest_user
             
             if not user:
@@ -280,9 +379,14 @@ def _complete_login_internal(email: str, code: str, current_guest_user_id: Optio
                 user = User(
                     email=email,
                     is_guest=False,
-                    last_login=datetime.utcnow()
+                    last_login=datetime.utcnow(),
+                    remember_me_enabled=remember_me,
+                    last_verified_email=email if remember_me else None,
+                    last_verification_date=datetime.utcnow() if remember_me else None
                 )
                 session.add(user)
+                if remember_me:
+                    print(f"DEBUG: Remember me enabled for new user")
         
         session.commit()
         
