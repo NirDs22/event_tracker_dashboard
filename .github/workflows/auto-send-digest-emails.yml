@@ -80,11 +80,12 @@ jobs:
         from monitoring.database import engine, SessionLocal
         from monitoring.email_sender import send_email_gmail_smtp
         from monitoring.secrets import get_secret
+        from sqlalchemy import text
         
         print('🔌 Testing database connection...')
         session = SessionLocal()
         try:
-            session.execute('SELECT 1')
+            session.execute(text('SELECT 1'))
             print('✅ Database connection: OK')
         except Exception as e:
             print(f'❌ Database connection failed: {e}')
