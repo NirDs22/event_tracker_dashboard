@@ -1,0 +1,198 @@
+name: Auto Send Digest Emails Daily
+on:
+  schedule:
+    # Run at 7:55 AM Israel Time (UTC+2 in summer, UTC+3 in winter)
+    # Using UTC+2 (Israel Standard Time - summer) = 5:55 AM UTC
+    # Using UTC+3 (Israel Standard Time - winter) = 4:55 AM UTC
+    # We'll use 4:55 AM UTC to cover both cases (will be 7:55 AM Israel time in winter, 6:55 AM in summer)
+    - cron: '55 4 * * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      test_mode:
+        description: 'Run in test mode (send only to test emails)'
+        required: false
+        default: 'false'
+        type: boolean
+      force_send:
+        description: 'Force send even if users already received digest today'
+        required: false
+        default: 'false'
+        type: boolean
+      specific_user_ids:
+        description: 'Specific user IDs to send to (comma-separated, leave empty for all)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  send-digest-emails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # Extended timeout for email sending
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create Secrets Configuration
+      run: |
+        mkdir -p .streamlit
+        cat > .streamlit/secrets.toml << EOF
+        postgres_url = "${{ secrets.POSTGRES_URL }}"
+        openai_api_key = "${{ secrets.OPENAI_API_KEY }}"
+        
+        # Email configuration (Gmail SMTP primary)
+        EMAIL_HOST = "${{ secrets.EMAIL_HOST }}"
+        EMAIL_PORT = "${{ secrets.EMAIL_PORT }}"
+        EMAIL_USER = "${{ secrets.EMAIL_USER }}"
+        EMAIL_PASS = "${{ secrets.EMAIL_PASS }}"
+        
+        # Brevo fallback configuration
+        BREVO_API = "${{ secrets.BREVO_API }}"
+        BREVO_FROM = "${{ secrets.BREVO_FROM }}"
+        BREVO_FROM_NAME = "${{ secrets.BREVO_FROM_NAME }}"
+        
+        # Additional API keys for data collection
+        reddit_client_id = "${{ secrets.REDDIT_CLIENT_ID }}"
+        reddit_client_secret = "${{ secrets.REDDIT_CLIENT_SECRET }}"
+        reddit_user_agent = "${{ secrets.REDDIT_USER_AGENT }}"
+        news_api_key = "${{ secrets.NEWS_API_KEY }}"
+        twitter_bearer_token = "${{ secrets.TWITTER_BEARER_TOKEN }}"
+        youtube_api_key = "${{ secrets.YOUTUBE_API_KEY }}"
+        EOF
+        
+    - name: Test Database and Email Configuration
+      run: |
+        python -c "
+        from monitoring.database import engine, SessionLocal
+        from monitoring.email_sender import send_email_gmail_smtp
+        from monitoring.secrets import get_secret
+        
+        print('🔌 Testing database connection...')
+        session = SessionLocal()
+        try:
+            session.execute('SELECT 1')
+            print('✅ Database connection: OK')
+        except Exception as e:
+            print(f'❌ Database connection failed: {e}')
+            exit(1)
+        finally:
+            session.close()
+        
+        print('📧 Testing email configuration...')
+        # Test basic email config (without actually sending)
+        smtp_user = get_secret('EMAIL_USER')
+        smtp_host = get_secret('EMAIL_HOST')
+        if smtp_user and smtp_host:
+            print(f'✅ Email configuration: {smtp_user} via {smtp_host}')
+        else:
+            print('❌ Email configuration incomplete')
+            exit(1)
+        "
+        
+    - name: Initialize Database
+      run: |
+        python -c "
+        from monitoring.database import init_db
+        print('🔧 Initializing database...')
+        init_db()
+        print('✅ Database initialized successfully')
+        "
+        
+    - name: Send Daily Digest Emails
+      run: |
+        python automation_digest_sender.py \
+          ${{ github.event.inputs.test_mode == 'true' && '--test-mode' || '' }} \
+          ${{ github.event.inputs.force_send == 'true' && '--force-send' || '' }} \
+          ${{ github.event.inputs.specific_user_ids && format('--specific-user-ids="{0}"', github.event.inputs.specific_user_ids) || '' }} \
+          ${{ secrets.TEST_EMAIL && format('--test-email="{0}"', secrets.TEST_EMAIL) || '' }}
+        
+    - name: Database Statistics After Digest Sending
+      if: always()
+      run: |
+        python -c "
+        from monitoring.database import SessionLocal, User
+        from sqlalchemy import func, and_
+        from datetime import datetime, timedelta
+        
+        session = SessionLocal()
+        try:
+            print('\\n📈 Post-Digest Database Statistics:')
+            
+            # Total registered users
+            total_users = session.query(func.count(User.id)).filter(User.is_guest == False).scalar()
+            print(f'👥 Total registered users: {total_users}')
+            
+            # Users with digest enabled
+            digest_enabled_users = session.query(func.count(User.id)).filter(
+                and_(User.digest_enabled == True, User.is_guest == False)
+            ).scalar()
+            print(f'📧 Users with digest enabled: {digest_enabled_users}')
+            
+            # Users with email addresses
+            users_with_email = session.query(func.count(User.id)).filter(
+                and_(User.email.isnot(None), User.is_guest == False)
+            ).scalar()
+            print(f'✉️ Users with email addresses: {users_with_email}')
+            
+            # Recent digest sends (last 24 hours)
+            yesterday = datetime.utcnow() - timedelta(hours=24)
+            recent_digests = session.query(func.count(User.id)).filter(
+                User.last_digest_sent >= yesterday
+            ).scalar()
+            print(f'📨 Digests sent in last 24h: {recent_digests}')
+            
+            # Digest frequency distribution
+            freq_dist = session.query(
+                User.digest_frequency,
+                func.count(User.id).label('count')
+            ).filter(
+                and_(User.digest_enabled == True, User.is_guest == False)
+            ).group_by(User.digest_frequency).all()
+            
+            if freq_dist:
+                print(f'📊 Digest frequency distribution:')
+                for freq, count in freq_dist:
+                    print(f'   • {freq or \"daily\"}: {count} users')
+            
+        except Exception as e:
+            print(f'❌ Error getting digest statistics: {e}')
+        finally:
+            session.close()
+        "
+
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "❌ Digest email workflow failed!"
+        echo "Please check the logs for details."
+        # You can add Slack/Discord/Email notifications here if needed
+        
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: send-digest-emails
+    if: always()
+    
+    steps:
+    - name: Cleanup Tasks
+      run: |
+        echo "🧹 Running cleanup tasks..."
+        
+        # Clean up any temporary files if needed
+        rm -rf /tmp/digest_*
+        
+        # Log completion
+        echo "✅ Digest email workflow completed at $(date -u)"

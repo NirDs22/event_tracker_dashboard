@@ -94,7 +94,7 @@ def _add_topic_underlines(text, topic_name):
 
 
 def render_card(title, summary, image_url, age_text, link, badge="News", topic_name=None, height=None):
-    """Render a content card with proper title and summary display.
+    """Render a content card with proper title and summary display and enhanced image previews.
     Contract:
     - Inputs: raw title/summary may be None/HTML; image/link optional; badge text.
     - Behavior: derive a sensible title when missing, show preview only if it adds info beyond title, and avoid duplicates.
@@ -114,6 +114,9 @@ def render_card(title, summary, image_url, age_text, link, badge="News", topic_n
     image_url = _to_text(image_url) or ""
     age_text = _to_text(age_text) or "Recently"
     link = _to_text(link) or ""
+    
+    # Enhance image URL for better preview quality
+    image_url = enhance_image_url_for_preview(image_url, badge.lower() if badge else None) or image_url
     
     # If title is missing/placeholder, derive it from summary or link
     def _derive_title():
@@ -675,8 +678,27 @@ def render_facebook_card(post):
         st.markdown('</div>', unsafe_allow_html=True)
 
 
+def extract_youtube_video_id(url):
+    """Extract YouTube video ID from various YouTube URL formats."""
+    if not url:
+        return None
+    
+    import re
+    # Common YouTube URL patterns
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})',
+        r'youtube\.com\/v\/([a-zA-Z0-9_-]{11})',
+        r'youtube\.com\/\?v=([a-zA-Z0-9_-]{11})',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
 def render_youtube_card(video):
-    """Render a YouTube video card"""
+    """Render a YouTube video card with automatic thumbnail generation"""
     import os
     IS_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
     
@@ -689,12 +711,24 @@ def render_youtube_card(video):
     summary = _first(getattr(video, "description", None), getattr(video, "content", None),
                      video.get("description") if hasattr(video, 'get') else None,
                      video.get("content") if hasattr(video, 'get') else None)
+    
+    # Get existing thumbnail or generate from URL
     thumb = _first(getattr(video, "thumbnail", None), getattr(video, "image_url", None),
                    video.get("thumbnail") if hasattr(video, 'get') else None,
                    video.get("image_url") if hasattr(video, 'get') else None)
+    
+    # Get video URL
     link = _first(getattr(video, "url", None), getattr(video, "watch_url", None),
                   video.get("url") if hasattr(video, 'get') else None,
                   video.get("watch_url") if hasattr(video, 'get') else None)
+    
+    # If no thumbnail but we have a YouTube URL, generate thumbnail
+    if not thumb and link:
+        video_id = extract_youtube_video_id(link)
+        if video_id:
+            # Use high quality thumbnail (hqdefault.jpg) - 480x360
+            thumb = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+    
     age = _first(getattr(video, "age_text", None), 
                  time_ago(getattr(video, "posted_at", None)),
                  video.get("age_text") if hasattr(video, 'get') else None)
@@ -709,8 +743,43 @@ def render_youtube_card(video):
         st.markdown('</div>', unsafe_allow_html=True)
 
 
+def enhance_image_url_for_preview(image_url, source_type=None):
+    """Enhance image URL to provide better previews/thumbnails."""
+    if not image_url:
+        return None
+    
+    # Instagram image optimization
+    if 'instagram.com' in image_url or source_type == 'instagram':
+        # Use higher quality version if available
+        if '/t51.2885-15/' in image_url:
+            # This is already a good quality Instagram image
+            return image_url
+        # Try to get a medium size version
+        if '?_nc_' in image_url:
+            return image_url + "&sz=640"
+    
+    # Twitter/X image optimization  
+    if ('pbs.twimg.com' in image_url or 'twitter.com' in image_url or 
+        source_type in ['twitter', 'x']):
+        # Add size parameter for better quality
+        if '?' in image_url:
+            return image_url + "&name=medium"
+        else:
+            return image_url + "?name=medium"
+    
+    # Reddit image optimization
+    if ('i.redd.it' in image_url or 'preview.redd.it' in image_url or 
+        source_type == 'reddit'):
+        # Use higher resolution preview
+        if 'preview.redd.it' in image_url:
+            return image_url.replace('&amp;', '&') + "&format=jpg&auto=webp&s="
+        return image_url
+    
+    # General optimization
+    return image_url
+
 def render_instagram_card(post):
-    """Render an Instagram post card"""
+    """Render an Instagram post card with enhanced image preview"""
     import os
     IS_CLOUD = os.environ.get("STREAMLIT_SHARING_MODE") == "streamlit_sharing" or os.environ.get("STREAMLIT_SERVER_HEADLESS") == "true"
     
@@ -722,9 +791,15 @@ def render_instagram_card(post):
     summary = _first(getattr(post, "caption", None), getattr(post, "content", None),
                      post.get("caption") if hasattr(post, 'get') else None,
                      post.get("content") if hasattr(post, 'get') else None)
+    
+    # Get image with enhanced preview
     image = _first(getattr(post, "display_url", None), getattr(post, "image_url", None),
                    post.get("display_url") if hasattr(post, 'get') else None,
                    post.get("image_url") if hasattr(post, 'get') else None)
+    
+    # Enhance image URL for better preview
+    image = enhance_image_url_for_preview(image, 'instagram')
+    
     link = _first(getattr(post, "url", None), post.get("url") if hasattr(post, 'get') else None)
     age = _first(getattr(post, "age_text", None), 
                  time_ago(getattr(post, "posted_at", None)),

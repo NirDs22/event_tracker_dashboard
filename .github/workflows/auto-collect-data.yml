@@ -1,0 +1,315 @@
+name: Auto Collect All Topics Data Every Hour
+on:
+  schedule:
+    # Run every hour at minute 0
+    - cron: '0 * * * *'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      force_collection:
+        description: 'Force collection for all topics'
+        required: false
+        default: 'false'
+        type: boolean
+      specific_topics:
+        description: 'Specific topic IDs to collect (comma-separated, leave empty for all)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  collect-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # Prevent jobs from running too long
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create Secrets Configuration
+      run: |
+        mkdir -p .streamlit
+        cat > .streamlit/secrets.toml << EOF
+        postgres_url = "${{ secrets.POSTGRES_URL }}"
+        openai_api_key = "${{ secrets.OPENAI_API_KEY }}"
+        reddit_client_id = "${{ secrets.REDDIT_CLIENT_ID }}"
+        reddit_client_secret = "${{ secrets.REDDIT_CLIENT_SECRET }}"
+        reddit_user_agent = "${{ secrets.REDDIT_USER_AGENT }}"
+        news_api_key = "${{ secrets.NEWS_API_KEY }}"
+        email_from = "${{ secrets.EMAIL_FROM }}"
+        email_password = "${{ secrets.EMAIL_PASSWORD }}"
+        smtp_server = "${{ secrets.SMTP_SERVER }}"
+        smtp_port = "${{ secrets.SMTP_PORT }}"
+        twitter_bearer_token = "${{ secrets.TWITTER_BEARER_TOKEN }}"
+        youtube_api_key = "${{ secrets.YOUTUBE_API_KEY }}"
+        EOF
+        
+    - name: Test Database Connection
+      run: |
+        python -c "
+        from monitoring.database import engine, SessionLocal
+        from monitoring.shared_topics import get_all_shared_topics_for_collection
+        
+        print('🔌 Testing database connection...')
+        session = SessionLocal()
+        try:
+            topics = get_all_shared_topics_for_collection()
+            print(f'✅ Connected to database successfully')
+            print(f'📊 Found {len(topics)} shared topics for collection')
+        except Exception as e:
+            print(f'❌ Database connection failed: {e}')
+            exit(1)
+        finally:
+            session.close()
+        "
+        
+    - name: Initialize Database
+      run: |
+        python -c "
+        from monitoring.database import init_db
+        print('🔧 Initializing database...')
+        init_db()
+        print('✅ Database initialized successfully')
+        "
+        
+    - name: Run Data Collection
+      run: |
+        python -c "
+        import sys
+        import traceback
+        from datetime import datetime, timedelta
+        from monitoring.shared_topics import get_all_shared_topics_for_collection, update_shared_topic_collection_time
+        from monitoring.shared_collectors import collect_shared_topic_data
+        
+        def main():
+            print('🚀 Starting automated data collection...')
+            print(f'⏰ Collection started at: {datetime.utcnow()} UTC')
+            
+            # Check for specific topics filter
+            specific_topics = '${{ github.event.inputs.specific_topics }}'.strip()
+            force_collection = '${{ github.event.inputs.force_collection }}' == 'true'
+            
+            # Get all topics that need collection
+            all_topics = get_all_shared_topics_for_collection()
+            
+            if specific_topics:
+                # Filter to specific topic IDs
+                topic_ids = [int(x.strip()) for x in specific_topics.split(',') if x.strip().isdigit()]
+                topics = [t for t in all_topics if t.id in topic_ids]
+                print(f'🎯 Filtering to specific topics: {topic_ids}')
+            else:
+                topics = all_topics
+            
+            if not topics:
+                print('ℹ️ No topics found for collection')
+                return
+                
+            print(f'📋 Processing {len(topics)} shared topics...')
+            
+            success_count = 0
+            error_count = 0
+            total_posts_collected = 0
+            
+            for topic in topics:
+                try:
+                    print(f'🔄 Collecting data for shared topic: {topic.name} (ID: {topic.id})')
+                    
+                    # Check if topic was collected recently (avoid too frequent collection)
+                    if not force_collection and topic.last_collected:
+                        time_since_last = datetime.utcnow() - topic.last_collected
+                        if time_since_last.total_seconds() < 1800:  # 30 minutes
+                            print(f'⏭️ Skipping {topic.name} - collected {time_since_last.total_seconds()//60:.0f} minutes ago')
+                            continue
+                    
+                    # Collect data for this shared topic
+                    result = collect_shared_topic_data(
+                        topic.id, 
+                        topic.name, 
+                        topic.keywords, 
+                        topic.profiles
+                    )
+                    
+                    if result.get('success', False):
+                        success_count += 1
+                        posts_collected = result.get('posts_collected', 0)
+                        total_posts_collected += posts_collected
+                        sources_processed = result.get('sources_processed', [])
+                        print(f'✅ {topic.name}: {posts_collected} posts from {len(sources_processed)} sources')
+                        
+                        # Update collection timestamp
+                        update_shared_topic_collection_time(topic.id)
+                    else:
+                        error_count += 1
+                        error_msg = result.get('error', 'Unknown error')
+                        print(f'❌ Failed to collect data for {topic.name}: {error_msg}')
+                        
+                except Exception as e:
+                    error_count += 1
+                    print(f'❌ Exception collecting {topic.name}: {e}')
+                    traceback.print_exc()
+                    continue
+            
+            print(f'\\n📊 Collection Summary:')
+            print(f'✅ Successful topics: {success_count}')
+            print(f'❌ Failed topics: {error_count}')
+            print(f'📝 Total topics processed: {success_count + error_count}')
+            print(f'📈 Total posts collected: {total_posts_collected}')
+            print(f'⏰ Collection completed at: {datetime.utcnow()} UTC')
+            
+            # Exit with error code if more than 50% failed
+            if error_count > success_count and (success_count + error_count) > 0:
+                print('⚠️ More than 50% of collections failed - exiting with error')
+                sys.exit(1)
+            
+        if __name__ == '__main__':
+            main()
+        "
+        
+    - name: Collection Results Summary
+      if: always()
+      run: |
+        python -c "
+        from monitoring.database import SessionLocal
+        from monitoring.shared_topics import get_all_shared_topics_for_collection
+        from sqlalchemy import func
+        from monitoring.database import SharedPost, SharedTopic
+        from datetime import datetime, timedelta
+        
+        session = SessionLocal()
+        try:
+            # Get recent posts count (last hour)
+            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            recent_posts = session.query(func.count(SharedPost.id)).filter(
+                SharedPost.posted_at >= one_hour_ago
+            ).scalar() or 0
+            
+            # Get total posts count
+            total_posts = session.query(func.count(SharedPost.id)).scalar() or 0
+            
+            # Get total topics count
+            total_topics = session.query(func.count(SharedTopic.id)).scalar() or 0
+            
+            # Get posts by source (recent)
+            from sqlalchemy import desc
+            recent_by_source = session.query(
+                SharedPost.source,
+                func.count(SharedPost.id).label('count')
+            ).filter(
+                SharedPost.posted_at >= one_hour_ago
+            ).group_by(SharedPost.source).all()
+            
+            print(f'\\n📈 Database Status:')
+            print(f'📊 Posts collected in last hour: {recent_posts}')
+            print(f'📊 Total posts in database: {total_posts}')
+            print(f'📊 Total shared topics: {total_topics}')
+            
+            if recent_by_source:
+                print(f'📊 Recent posts by source:')
+                for source, count in recent_by_source:
+                    print(f'   • {source}: {count}')
+            
+        except Exception as e:
+            print(f'❌ Error getting stats: {e}')
+        finally:
+            session.close()
+        "
+
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "❌ Data collection workflow failed!"
+        echo "Please check the logs for details."
+        # You can add Slack/Discord/Email notifications here if needed
+        
+  health-check:
+    runs-on: ubuntu-latest
+    needs: collect-data
+    if: always()
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Create Secrets Configuration
+      run: |
+        mkdir -p .streamlit
+        cat > .streamlit/secrets.toml << EOF
+        postgres_url = "${{ secrets.POSTGRES_URL }}"
+        EOF
+        
+    - name: Database Health Check
+      run: |
+        python -c "
+        from monitoring.database import SessionLocal, SharedTopic, SharedPost
+        from sqlalchemy import func, text
+        from datetime import datetime, timedelta
+        import sys
+        
+        session = SessionLocal()
+        try:
+            print('🏥 Running database health check...')
+            
+            # Check database connectivity
+            session.execute(text('SELECT 1'))
+            print('✅ Database connection: OK')
+            
+            # Check topics count
+            topics_count = session.query(func.count(SharedTopic.id)).scalar()
+            print(f'✅ Shared topics count: {topics_count}')
+            
+            # Check posts count
+            posts_count = session.query(func.count(SharedPost.id)).scalar()
+            print(f'✅ Shared posts count: {posts_count}')
+            
+            # Check recent activity (last 24 hours)
+            yesterday = datetime.utcnow() - timedelta(hours=24)
+            recent_posts = session.query(func.count(SharedPost.id)).filter(
+                SharedPost.posted_at >= yesterday
+            ).scalar()
+            print(f'✅ Posts in last 24h: {recent_posts}')
+            
+            # Check data freshness
+            latest_post = session.query(func.max(SharedPost.posted_at)).scalar()
+            if latest_post:
+                freshness = datetime.utcnow() - latest_post
+                print(f'✅ Latest post age: {freshness.total_seconds()//3600:.1f} hours')
+                
+                # Alert if data is too old (more than 6 hours)
+                if freshness.total_seconds() > 21600:
+                    print('⚠️ WARNING: No new posts in over 6 hours')
+                    sys.exit(1)
+            else:
+                print('⚠️ WARNING: No posts found in database')
+                
+            print('✅ Health check completed successfully')
+            
+        except Exception as e:
+            print(f'❌ Health check failed: {e}')
+            sys.exit(1)
+        finally:
+            session.close()
+        "

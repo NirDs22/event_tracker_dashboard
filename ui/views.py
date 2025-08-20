@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 import html as py_html
-from datetime import datetime
+from datetime import datetime, timedelta
 from textwrap import dedent
 from streamlit.components.v1 import html as st_html
 
@@ -12,6 +12,65 @@ from .charts import create_time_series_chart, create_source_distribution_chart, 
 from .cards import render_news_card, render_reddit_card, render_facebook_card, render_youtube_card, render_instagram_card, render_card, render_tldr_button
 from .utils import time_ago, clean_content, _first
 from monitoring.summarizer import summarize, strip_think
+
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_subreddit_recommendations():
+    """Get cached recommended subreddits with post counts."""
+    try:
+        from monitoring.database import SessionLocal, SharedPost
+        from sqlalchemy import func
+        
+        session = SessionLocal()
+        
+        # Get subreddits from recent posts
+        one_week_ago = datetime.utcnow() - timedelta(days=7)
+        
+        subreddit_counts = (
+            session.query(
+                SharedPost.subreddit,
+                func.count(SharedPost.id).label('post_count')
+            )
+            .filter(SharedPost.subreddit.isnot(None))
+            .filter(SharedPost.subreddit != '')
+            .filter(SharedPost.posted_at >= one_week_ago)
+            .group_by(SharedPost.subreddit)
+            .order_by(func.count(SharedPost.id).desc())
+            .limit(15)
+            .all()
+        )
+        
+        session.close()
+        return [(subreddit, count) for subreddit, count in subreddit_counts if count > 2]
+        
+    except Exception:
+        return []
+
+
+def render_recommended_subreddits():
+    """Render recommended subreddits as chips."""
+    subreddits = get_cached_subreddit_recommendations()
+    
+    if subreddits:
+        st.markdown("**🎯 Trending Subreddits**")
+        
+        # Create chips display
+        chips_html = "<div style='display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0;'>"
+        for subreddit, count in subreddits:
+            chips_html += f"""
+            <span style='
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 4px 8px;
+                border-radius: 12px;
+                font-size: 0.8em;
+                font-weight: 500;
+                white-space: nowrap;
+            '>r/{subreddit} ({count})</span>
+            """
+        chips_html += "</div>"
+        
+        st.markdown(chips_html, unsafe_allow_html=True)
 
 
 def render_overview_page(topics, session, Post, current_user_id: int):
@@ -42,17 +101,28 @@ def render_overview_page(topics, session, Post, current_user_id: int):
     
     # Topic cards in responsive grid layout - always create 3 columns for proper sizing
     if user_topics:
+        # Optimized: Get all posts for all topics in one query to avoid N+1
+        topic_ids = [topic.id for topic in user_topics]
+        all_posts = (
+            session.query(Post)
+            .filter(Post.topic_id.in_(topic_ids))
+            .order_by(Post.posted_at.desc())
+            .all()
+        )
+        
+        # Group posts by topic_id for efficient lookup
+        posts_by_topic = {}
+        for post in all_posts:
+            if post.topic_id not in posts_by_topic:
+                posts_by_topic[post.topic_id] = []
+            posts_by_topic[post.topic_id].append(post)
+        
         cols = st.columns(3)  # Always create 3 columns for consistent card sizing
         for idx, topic in enumerate(user_topics):
             # Use modulo to wrap to next row after 3 cards
             col_idx = idx % 3
             with cols[col_idx]:
-                posts = (
-                    session.query(Post)
-                    .filter_by(topic_id=topic.id)
-                    .order_by(Post.posted_at.desc())
-                    .all()
-                )
+                posts = posts_by_topic.get(topic.id, [])
                 
                 new_posts_count = 0
                 if topic.last_viewed and posts:
@@ -403,7 +473,7 @@ def render_news_tab(df):
 
 
 def render_reddit_tab(df):
-    """Render the Reddit tab."""
+    """Render the Reddit tab with posts and recommended subreddits."""
     reddit_df = df[df["source"] == "reddit"]
     if not reddit_df.empty:
         st.markdown('<h3 class="section-heading">👽 Reddit Posts</h3>', unsafe_allow_html=True)
@@ -415,6 +485,9 @@ def render_reddit_tab(df):
             current_col = col1 if idx % 2 == 0 else col2
             with current_col:
                 render_reddit_card(row)
+        
+        # Show recommended subreddits section
+        render_recommended_subreddits()
     else:
         st.info("No Reddit posts found for this topic.")
 
@@ -579,7 +652,7 @@ def render_analytics_tab(df, topic=None):
             # Get color safely - SharedTopic objects don't have color attribute
             border_color = getattr(topic, 'color', "#007AFF") if topic else "#007AFF"
 
-            st_html(dedent(f"""
+            st.markdown(f"""
             <div style="
                 background: #f8f9fa; 
                 padding: 1.5rem; 
@@ -589,15 +662,12 @@ def render_analytics_tab(df, topic=None):
                 color: #1C1C1E;
                 line-height: 1.8;
                 font-size: 18px;
-                min-height: 220px;
-                max-height: 700px;
-                overflow-y: auto;
+                word-wrap: break-word;
+                white-space: pre-wrap;
             ">
-                <div style="font-family: inherit; color: inherit;">
-                    {summary_html_body}
-                </div>
+                {summary_html_body}
             </div>
-            """), height=max(computed_height, 220))
+            """, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"Failed to generate summary: {e}")
 

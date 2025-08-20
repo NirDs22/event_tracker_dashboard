@@ -10,3 +10,4 @@ extra-streamlit-components
 wordcloud
 nltk
 g4f
+psycopg2-binary

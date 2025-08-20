@@ -105,8 +105,13 @@ def create_source_distribution_chart(df: pd.DataFrame, title: str = "📊 Posts 
         st.info("📊 No data available in the last 3 months")
         return
     
+    # Clean the data - remove null/empty sources and replace with "unknown"
+    df_filtered = df_filtered.copy()
+    df_filtered['source'] = df_filtered['source'].fillna('unknown').replace('', 'unknown')
+    df_filtered = df_filtered[df_filtered['source'].notna()]  # Remove any remaining null values
+    
     source_dist = df_filtered.groupby("source").size().reset_index(name="count")
-    source_dist["icon"] = source_dist["source"].map(SOURCE_ICONS)
+    source_dist["icon"] = source_dist["source"].map(SOURCE_ICONS).fillna("📄")  # Default icon for unknown sources
     source_dist["display"] = source_dist["icon"] + " " + source_dist["source"].str.title()
     
     fig = px.pie(

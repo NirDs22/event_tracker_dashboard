@@ -111,8 +111,8 @@ Optional configuration via Streamlit secrets or environment:
 
 ## 🚨 Important Notes for Cloud Deployment
 
-1. **Database**: Uses SQLite by default (suitable for Streamlit Cloud)
-2. **File Storage**: All data stored in `tracker.db` file
+1. **Database**: Uses PostgreSQL on Neon cloud database for production, SQLite fallback for local development
+2. **Data Storage**: All data stored in secure cloud database with automatic backups
 3. **Memory Usage**: Optimized for cloud resource limits
 4. **Rate Limiting**: Conservative web scraping to avoid IP blocks
 5. **Error Handling**: Robust error handling for network issues

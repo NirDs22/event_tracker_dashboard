@@ -374,3 +374,71 @@ def migrate_to_shared_topics():
     """Migrate existing topics to shared topic system."""
     from monitoring.shared_topics import migrate_existing_topics_to_shared
     migrate_existing_topics_to_shared()
+
+
+def collect_shared_topic_data(shared_topic_id: int, topic_name: str, keywords: str, profiles: str) -> Dict[str, Any]:
+    """
+    Collect data for a specific shared topic.
+    Used by GitHub Actions workflow for individual topic collection.
+    
+    Returns:
+        Dict with success status, posts_collected count, and any errors
+    """
+    try:
+        print(f"🔄 Collecting data for shared topic: {topic_name}")
+        
+        # Create a temporary topic object for the collector
+        temp_topic = type('SharedTopic', (), {
+            'id': shared_topic_id,
+            'name': topic_name,
+            'keywords': keywords or '',
+            'profiles': profiles or ''
+        })()
+        
+        # Use the shared collector to collect data for this single topic
+        total_posts = 0
+        all_errors = []
+        
+        # Determine sources for this topic
+        sources = shared_collector._determine_sources_for_topic(temp_topic)
+        
+        # Collect from each source
+        for source_name in sources:
+            try:
+                posts_collected, errors = shared_collector._collect_from_source(source_name, [temp_topic])
+                total_posts += posts_collected
+                all_errors.extend(errors)
+                
+                if posts_collected > 0:
+                    print(f"  ✅ {source_name}: {posts_collected} posts")
+                    
+            except Exception as e:
+                error_msg = f"Error collecting from {source_name}: {str(e)}"
+                all_errors.append(error_msg)
+                print(f"  ❌ {source_name}: {error_msg}")
+        
+        # Return success result
+        result = {
+            'success': True,
+            'posts_collected': total_posts,
+            'sources_processed': sources,
+            'errors': all_errors
+        }
+        
+        if total_posts > 0:
+            print(f"✅ Successfully collected {total_posts} posts for {topic_name}")
+        else:
+            print(f"ℹ️ No new posts found for {topic_name}")
+            
+        return result
+        
+    except Exception as e:
+        error_msg = f"Failed to collect data for {topic_name}: {str(e)}"
+        print(f"❌ {error_msg}")
+        
+        return {
+            'success': False,
+            'posts_collected': 0,
+            'error': error_msg,
+            'sources_processed': []
+        }

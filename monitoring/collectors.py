@@ -89,6 +89,30 @@ def perform_rss_search(query: str, site: str = None) -> Tuple[List[dict], List[s
                                     content = re.sub(r'<[^>]+>', '', content)
                                     content = re.sub(r'\s+', ' ', content).strip()
                             
+                            # Generate image URL for YouTube videos
+                            image_url = None
+                            if source['source_type'] == 'youtube' and url:
+                                # Extract video ID and generate thumbnail
+                                import re
+                                youtube_id_patterns = [
+                                    r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})',
+                                    r'youtube\.com\/v\/([a-zA-Z0-9_-]{11})',
+                                ]
+                                for pattern in youtube_id_patterns:
+                                    match = re.search(pattern, url)
+                                    if match:
+                                        video_id = match.group(1)
+                                        image_url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+                                        break
+                            
+                            # Extract subreddit for Reddit posts
+                            subreddit = None
+                            if source['source_type'] == 'reddit' and url:
+                                import re
+                                subreddit_match = re.search(r'reddit\.com\/r\/([^\/]+)', url)
+                                if subreddit_match:
+                                    subreddit = subreddit_match.group(1)
+                            
                             posts.append({
                                 'source': source['source_type'],
                                 'title': title,
@@ -97,8 +121,9 @@ def perform_rss_search(query: str, site: str = None) -> Tuple[List[dict], List[s
                                 'posted_at': posted_dt,
                                 'likes': 0,
                                 'comments': 0,
-                                'image_url': None,
-                                'is_photo': False
+                                'image_url': image_url,
+                                'is_photo': False,
+                                'subreddit': subreddit
                             })
                         except Exception as entry_error:
                             continue

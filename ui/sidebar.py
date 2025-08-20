@@ -5,10 +5,63 @@ import json
 import pathlib
 import threading
 import traceback
+from datetime import datetime, timedelta
 from monitoring.database import SessionLocal, Topic, Post
 from monitoring.collectors import collect_topic, collect_all_topics_efficiently
 # from monitoring.scheduler import send_test_digest  # Disabled for cloud
 from monitoring.secrets import get_secret
+
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_topic_stats():
+    """Get cached topic statistics to avoid repeated database calls."""
+    try:
+        from monitoring.database import SharedTopic, SharedPost
+        session = SessionLocal()
+        
+        topic_count = session.query(SharedTopic).count()
+        post_count = session.query(SharedPost).count()
+        
+        session.close()
+        return {
+            'topics': topic_count,
+            'posts': post_count,
+            'updated': datetime.now().strftime('%H:%M')
+        }
+    except Exception:
+        return {'topics': 0, 'posts': 0, 'updated': 'error'}
+
+
+@st.cache_data(ttl=180)  # Cache for 3 minutes
+def get_cached_recommended_subreddits():
+    """Get cached subreddit recommendations to avoid repeated queries."""
+    try:
+        session = SessionLocal()
+        
+        # Get subreddits from the last week with post counts
+        one_week_ago = datetime.utcnow() - timedelta(days=7)
+        from sqlalchemy import func
+        from monitoring.database import SharedPost
+        
+        subreddit_counts = (
+            session.query(
+                SharedPost.subreddit,
+                func.count(SharedPost.id).label('post_count')
+            )
+            .filter(SharedPost.subreddit.isnot(None))
+            .filter(SharedPost.subreddit != '')
+            .filter(SharedPost.posted_at >= one_week_ago)
+            .group_by(SharedPost.subreddit)
+            .order_by(func.count(SharedPost.id).desc())
+            .limit(10)
+            .all()
+        )
+        
+        session.close()
+        return [(subreddit, count) for subreddit, count in subreddit_counts]
+        
+    except Exception:
+        return []
 
 
 def render_digest_preferences(user):
@@ -259,32 +312,35 @@ def generate_and_send_digest(user_email, user_id):
         
         # Handle sample digest (user_id = 0)
         if user_id == 0:
-            # Get recent posts from all shared topics for sample
+            # Get recent posts from all shared topics for sample - optimized query
             three_days_ago = datetime.utcnow() - timedelta(days=3)
             shared_topics = session.query(SharedTopic).limit(5).all()  # Sample from 5 topics
+            shared_topic_ids = [st.id for st in shared_topics]
+            
+            # Get all posts in one query instead of N+1
+            recent_posts = (
+                session.query(SharedPost, SharedTopic)
+                .join(SharedTopic)
+                .filter(SharedPost.shared_topic_id.in_(shared_topic_ids))
+                .filter(SharedPost.posted_at >= three_days_ago)
+                .order_by(SharedPost.posted_at.desc())
+                .limit(15)  # Limit total posts instead of per topic
+                .all()
+            )
             
             all_posts = []
-            for shared_topic in shared_topics:
-                posts = (
-                    session.query(SharedPost)
-                    .filter_by(shared_topic_id=shared_topic.id)
-                    .filter(SharedPost.posted_at >= three_days_ago)
-                    .order_by(SharedPost.posted_at.desc())
-                    .limit(3)  # Sample posts
-                    .all()
-                )
-                for post in posts:
-                    all_posts.append({
-                        'title': post.title or (post.content[:80] + '...' if post.content and len(post.content) > 80 else post.content),
-                        'content': post.content,
-                        'url': post.url,
-                        'source': post.source,
-                        'posted_at': post.posted_at,
-                        'likes': getattr(post, 'likes', 0),
-                        'comments': getattr(post, 'comments', 0),
-                        'topic': shared_topic.name,
-                        'topic_icon': getattr(shared_topic, 'icon', '📌')
-                    })
+            for post, shared_topic in recent_posts:
+                all_posts.append({
+                    'title': post.title or (post.content[:80] + '...' if post.content and len(post.content) > 80 else post.content),
+                    'content': post.content,
+                    'url': post.url,
+                    'source': post.source,
+                    'posted_at': post.posted_at,
+                    'likes': getattr(post, 'likes', 0),
+                    'comments': getattr(post, 'comments', 0),
+                    'topic': shared_topic.name,
+                    'topic_icon': getattr(shared_topic, 'icon', '📌')
+                })
             
             session.close()
             
@@ -298,7 +354,7 @@ def generate_and_send_digest(user_email, user_id):
             result = send_email(user_email, "Sample Daily Digest", html_body, 'html')
             return result
         
-        # Regular user digest
+        # Regular user digest - optimized queries
         # Get user's topics (both personal and shared)
         user_topics = session.query(Topic).filter_by(user_id=user_id).all()
         
@@ -313,17 +369,20 @@ def generate_and_send_digest(user_email, user_id):
         
         all_posts = []
         
-        # Personal topics
-        for topic in user_topics:
-            posts = (
-                session.query(Post)
-                .filter_by(topic_id=topic.id)
+        # Personal topics - batch query to avoid N+1
+        if user_topics:
+            user_topic_ids = [topic.id for topic in user_topics]
+            personal_posts = (
+                session.query(Post, Topic)
+                .join(Topic)
+                .filter(Post.topic_id.in_(user_topic_ids))
                 .filter(Post.posted_at >= three_days_ago)
                 .order_by(Post.posted_at.desc())
-                .limit(5)  # Limit per topic
+                .limit(25)  # Total limit for all personal topics
                 .all()
             )
-            for post in posts:
+            
+            for post, topic in personal_posts:
                 all_posts.append({
                     'title': post.title or (post.content[:80] + '...' if post.content and len(post.content) > 80 else post.content),
                     'content': post.content,
@@ -336,17 +395,19 @@ def generate_and_send_digest(user_email, user_id):
                     'topic_icon': topic.icon
                 })
         
-        # Shared topics
-        for shared_topic in shared_topics:
-            posts = (
-                session.query(SharedPost)
-                .filter_by(shared_topic_id=shared_topic.id)
+        # Shared topics - batch query to avoid N+1
+        if shared_topics:
+            shared_posts = (
+                session.query(SharedPost, SharedTopic)
+                .join(SharedTopic)
+                .filter(SharedPost.shared_topic_id.in_(shared_topic_ids))
                 .filter(SharedPost.posted_at >= three_days_ago)
                 .order_by(SharedPost.posted_at.desc())
-                .limit(5)  # Limit per topic
+                .limit(25)  # Total limit for all shared topics
                 .all()
             )
-            for post in posts:
+            
+            for post, shared_topic in shared_posts:
                 all_posts.append({
                     'title': post.title or (post.content[:80] + '...' if post.content and len(post.content) > 80 else post.content),
                     'content': post.content,

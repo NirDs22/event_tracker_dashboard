@@ -1,21 +1,81 @@
 import os
-from datetime import datetime
+import functools
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 from monitoring.secrets import get_secret
 
-# Configure writable database path for Streamlit Cloud
-DB_PATH = get_secret('TRACKER_DB')
-if not DB_PATH:
-    # Create data directory if it doesn't exist
-    data_dir = 'data'
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
-    DB_PATH = os.path.join(data_dir, 'tracker.db')
+# Simple in-memory cache for frequently accessed data
+_query_cache = {}
+_cache_timeout = 300  # 5 minutes
 
-engine = create_engine(f'sqlite:///{DB_PATH}', connect_args={'check_same_thread': False})
-SessionLocal = sessionmaker(bind=engine)
+
+def cached_query(timeout_seconds=300):
+    """Decorator for caching database queries."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Create cache key from function name and arguments
+            cache_key = f"{func.__name__}:{hash(str(args) + str(kwargs))}"
+            now = datetime.now()
+            
+            # Check if cached result exists and is still valid
+            if cache_key in _query_cache:
+                result, timestamp = _query_cache[cache_key]
+                if (now - timestamp).total_seconds() < timeout_seconds:
+                    return result
+            
+            # Execute query and cache result
+            result = func(*args, **kwargs)
+            _query_cache[cache_key] = (result, now)
+            
+            return result
+        return wrapper
+    return decorator
+
+# Get database URL from secrets - prefer PostgreSQL, fallback to SQLite for local dev
+DATABASE_URL = get_secret('postgres_url') or get_secret('DATABASE_URL')
+
+if DATABASE_URL:
+    # Using PostgreSQL from Neon - optimized for performance
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=10,          # Increase pool size for better concurrency
+        max_overflow=20,       # Allow overflow connections
+        pool_recycle=3600,     # Recycle connections every hour
+        pool_timeout=30,       # Wait up to 30 seconds for a connection
+        echo=False,            # Disable SQL logging for performance
+        connect_args={
+            "sslmode": "require",
+            "connect_timeout": 10,
+            "application_name": "event_tracker"
+        }
+    )
+else:
+    # Fallback to SQLite for local development
+    print("Using SQLite fallback for local development")
+    DB_PATH = get_secret('TRACKER_DB')
+    if not DB_PATH:
+        # Create data directory if it doesn't exist
+        data_dir = 'data'
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        DB_PATH = os.path.join(data_dir, 'tracker.db')
+    
+    engine = create_engine(
+        f'sqlite:///{DB_PATH}',
+        connect_args={'check_same_thread': False},
+        pool_pre_ping=True
+    )
+
+SessionLocal = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,       # Don't auto-flush to improve performance
+    expire_on_commit=False # Don't expire objects on commit for better caching
+)
 
 Base = declarative_base()
 
@@ -126,17 +186,17 @@ class SharedPost(Base):
     __tablename__ = 'shared_posts'
 
     id = Column(Integer, primary_key=True)
-    shared_topic_id = Column(Integer, ForeignKey('shared_topics.id'), nullable=False)
+    shared_topic_id = Column(Integer, ForeignKey('shared_topics.id'), nullable=False, index=True)
     source = Column(String, index=True)
     title = Column(Text, nullable=True)
     content = Column(Text)
-    url = Column(String, unique=True)
-    posted_at = Column(DateTime)
+    url = Column(String, unique=True, index=True)  # Index for faster duplicate checking
+    posted_at = Column(DateTime, index=True)  # Index for date-based queries
     likes = Column(Integer, default=0)
     comments = Column(Integer, default=0)
     image_url = Column(String, nullable=True)
-    is_photo = Column(Boolean, default=False)
-    subreddit = Column(String, nullable=True)
+    is_photo = Column(Boolean, default=False, index=True)  # Index for filtering photos
+    subreddit = Column(String, nullable=True, index=True)  # Index for subreddit filtering
     
     shared_topic = relationship('SharedTopic', back_populates='posts')
 
@@ -145,18 +205,18 @@ class Post(Base):
     __tablename__ = 'posts'
 
     id = Column(Integer, primary_key=True)
-    topic_id = Column(Integer, ForeignKey('topics.id'))
+    topic_id = Column(Integer, ForeignKey('topics.id'), index=True)
     source = Column(String, index=True)
     # Optional human-readable title (for News/Reddit/etc.)
     title = Column(Text, nullable=True)
     content = Column(Text)
-    url = Column(String, unique=True)
-    posted_at = Column(DateTime)
+    url = Column(String, unique=True, index=True)  # Index for faster duplicate checking
+    posted_at = Column(DateTime, index=True)  # Index for date-based queries
     likes = Column(Integer, default=0)
     comments = Column(Integer, default=0)
     image_url = Column(String, nullable=True)  # URL to associated image
-    is_photo = Column(Boolean, default=False)  # Whether this is primarily a photo post
-    subreddit = Column(String, nullable=True)  # Subreddit name for Reddit posts
+    is_photo = Column(Boolean, default=False, index=True)  # Index for filtering photos
+    subreddit = Column(String, nullable=True, index=True)  # Index for subreddit filtering
 
     topic = relationship('Topic', back_populates='posts')
 
@@ -175,114 +235,97 @@ def migrate_database():
         from sqlalchemy import text
         session = SessionLocal()
         
-        # Check if users table exists, create if not
-        try:
-            session.execute(text("SELECT id FROM users LIMIT 1"))
-        except Exception:
-            # Users table doesn't exist, create it
-            try:
-                Base.metadata.create_all(engine)
-                print("✅ Database migrated: Created users and login_codes tables")
-            except Exception as e:
-                print(f"⚠️ Migration warning for auth tables: {e}")
-                session.rollback()
+        # First, create all tables if they don't exist
+        Base.metadata.create_all(engine)
         
-        # Create shared topics tables
-        try:
-            session.execute(text("SELECT id FROM shared_topics LIMIT 1"))
-        except Exception:
-            try:
-                Base.metadata.create_all(engine)
-                print("✅ Database migrated: Created shared topics system tables")
-            except Exception as e:
-                print(f"⚠️ Migration warning for shared topics: {e}")
-                session.rollback()
+        # Detect database type
+        db_dialect = engine.dialect.name
+        is_sqlite = db_dialect == 'sqlite'
+        is_postgresql = db_dialect == 'postgresql'
         
-        # Check if user_id column exists in topics table
+        # Check if users table exists and has data
         try:
-            session.execute(text("SELECT user_id FROM topics LIMIT 1"))
+            result = session.execute(text("SELECT COUNT(*) FROM users")).fetchone()
+            users_exist = result[0] > 0 if result else False
         except Exception:
-            # user_id column doesn't exist, add it
-            try:
-                session.execute(text("ALTER TABLE topics ADD COLUMN user_id INTEGER DEFAULT 0"))
-                session.commit()
-                print("✅ Database migrated: Added user_id column to topics table")
-            except Exception as e:
-                print(f"⚠️ Migration warning for user_id column: {e}")
-                session.rollback()
+            users_exist = False
+            
+        if not users_exist:
+            print("✅ Database initialized: Created all tables on new database")
         
-        # Check if new columns exist in posts and add them if they don't
-        try:
-            session.execute(text("SELECT image_url, is_photo FROM posts LIMIT 1"))
-        except Exception:
-            # Columns don't exist, add them
+        # For SQLite, we might need to handle specific column additions
+        # For PostgreSQL, the create_all should handle everything
+        if is_sqlite:
+            # Handle SQLite-specific migrations if needed
             try:
-                session.execute(text("ALTER TABLE posts ADD COLUMN image_url TEXT"))
-                session.execute(text("ALTER TABLE posts ADD COLUMN is_photo BOOLEAN DEFAULT 0"))
-                session.commit()
-                print("✅ Database migrated: Added image_url and is_photo columns to posts table")
-            except Exception as e:
-                print(f"⚠️ Migration warning: {e}")
-                session.rollback()
-
-        # Ensure 'title' column exists for posts
-        try:
-            session.execute(text("SELECT title FROM posts LIMIT 1"))
-        except Exception:
+                # Check if user_id column exists in topics table
+                session.execute(text("SELECT user_id FROM topics LIMIT 1"))
+            except Exception:
+                try:
+                    session.execute(text("ALTER TABLE topics ADD COLUMN user_id INTEGER DEFAULT 0"))
+                    session.commit()
+                    print("✅ Database migrated: Added user_id column to topics table")
+                except Exception as e:
+                    print(f"⚠️ Migration warning for user_id column: {e}")
+                    session.rollback()
+            
+            # Check for image_url and is_photo columns
             try:
-                session.execute(text("ALTER TABLE posts ADD COLUMN title TEXT"))
-                session.commit()
-                print("✅ Database migrated: Added title column to posts table")
-            except Exception as e:
-                print(f"⚠️ Migration warning for title column: {e}")
-                session.rollback()
+                session.execute(text("SELECT image_url, is_photo FROM posts LIMIT 1"))
+            except Exception:
+                try:
+                    session.execute(text("ALTER TABLE posts ADD COLUMN image_url TEXT"))
+                    session.execute(text("ALTER TABLE posts ADD COLUMN is_photo BOOLEAN DEFAULT 0"))
+                    session.commit()
+                    print("✅ Database migrated: Added image_url and is_photo columns to posts table")
+                except Exception as e:
+                    print(f"⚠️ Migration warning: {e}")
+                    session.rollback()
+            
+            # Check for subreddit column
+            try:
+                session.execute(text("SELECT subreddit FROM posts LIMIT 1"))
+            except Exception:
+                try:
+                    session.execute(text("ALTER TABLE posts ADD COLUMN subreddit TEXT"))
+                    session.commit()
+                    print("✅ Database migrated: Added subreddit column to posts table")
+                except Exception as e:
+                    print(f"⚠️ Migration warning for subreddit column: {e}")
+                    session.rollback()
         
-        # Check for subreddit column
+        # Create default admin user for existing topics if needed (database-agnostic)
         try:
-            session.execute(text("SELECT subreddit FROM posts LIMIT 1"))
-        except Exception:
-            # Subreddit column doesn't exist, add it
-            try:
-                session.execute(text("ALTER TABLE posts ADD COLUMN subreddit TEXT"))
-                session.commit()
-                print("✅ Database migrated: Added subreddit column to posts table")
-            except Exception as e:
-                print(f"⚠️ Migration warning for subreddit column: {e}")
-                session.rollback()
-        
-        # Create default admin user for existing topics if needed
-        try:
-            # Check if there are topics without a valid user_id
             result = session.execute(text("SELECT COUNT(*) FROM topics WHERE user_id = 0")).fetchone()
             if result and result[0] > 0:
                 # Create default admin user
-                admin_user_id = session.execute(text(
-                    "INSERT INTO users (email, is_guest, created_at) VALUES (NULL, 1, datetime('now')) RETURNING id"
-                )).fetchone()
-                if admin_user_id:
-                    admin_id = admin_user_id[0]
+                if is_sqlite:
+                    admin_user_result = session.execute(text(
+                        "INSERT INTO users (email, is_guest, created_at) VALUES (NULL, 1, datetime('now')) RETURNING id"
+                    )).fetchone()
+                elif is_postgresql:
+                    admin_user_result = session.execute(text(
+                        "INSERT INTO users (email, is_guest, created_at) VALUES (NULL, true, NOW()) RETURNING id"
+                    )).fetchone()
+                else:
+                    # Generic approach
+                    session.execute(text(
+                        "INSERT INTO users (email, is_guest, created_at) VALUES (NULL, true, NOW())"
+                    ))
+                    admin_user_result = session.execute(text("SELECT lastval()")).fetchone()
+                
+                if admin_user_result:
+                    admin_id = admin_user_result[0]
                     session.execute(text(f"UPDATE topics SET user_id = {admin_id} WHERE user_id = 0"))
                     session.commit()
                     print(f"✅ Database migrated: Created admin user (id={admin_id}) for existing topics")
         except Exception as e:
             print(f"⚠️ Migration warning for admin user creation: {e}")
             session.rollback()
-        
-        # Add collection status fields to shared_topics if they don't exist
-        try:
-            session.execute(text("SELECT collection_status FROM shared_topics LIMIT 1"))
-        except Exception:
-            try:
-                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_status TEXT DEFAULT NULL"))
-                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_start_time DATETIME"))
-                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_end_time DATETIME"))
-                session.execute(text("ALTER TABLE shared_topics ADD COLUMN collection_errors TEXT"))
-                session.commit()
-                print("✅ Database migrated: Added collection status fields to shared_topics")
-            except Exception as e:
-                print(f"⚠️ Migration warning (collection status): {e}")
                 
         session.close()
+        print(f"✅ Database migration completed successfully on {db_dialect}")
+        
     except Exception as e:
         print(f"❌ Migration error: {e}")
 
@@ -290,3 +333,16 @@ def migrate_database():
 def get_db_session():
     """Get a new database session."""
     return SessionLocal()
+
+
+def get_db_context():
+    """Context manager for database sessions - ensures proper cleanup."""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
