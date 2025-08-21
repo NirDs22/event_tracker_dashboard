@@ -1,0 +1,22 @@
+name: Daily Cleanup
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Every day at midnight UTC
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install sqlalchemy psycopg2-binary
+      - name: Run cleanup script
+        env:
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+        run: python scripts/cleanup_guests_topics.py

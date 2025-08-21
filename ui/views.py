@@ -81,49 +81,24 @@ def render_overview_page(topics, session, Post, current_user_id: int):
     # Only show welcome screen for new users without topics
     if not user_topics:
         render_welcome_screen()
-        st.markdown("""
-        <div style="text-align: center; padding: 3rem 1rem;">
-            <h2 style="color: #666;">🎯 Ready to start tracking?</h2>
-            <p style="font-size: 1.1rem; color: #888; margin: 1rem 0 2rem 0;">
-                Create your first topic to begin monitoring news and social media
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
         return
-    
-    # Show collection progress cards if any topics are being collected
-    render_collection_progress_cards(current_user_id)
-    
-    # Render topics grid
-    render_metrics_summary(user_topics, session, Post)
-    
-    st.markdown("---")
-    
-    # Topic cards in responsive grid layout - always create 3 columns for proper sizing
-    if user_topics:
-        # Optimized: Get all posts for all topics in one query to avoid N+1
-        topic_ids = [topic.id for topic in user_topics]
-        all_posts = (
-            session.query(Post)
-            .filter(Post.topic_id.in_(topic_ids))
-            .order_by(Post.posted_at.desc())
-            .all()
-        )
-        
-        # Group posts by topic_id for efficient lookup
-        posts_by_topic = {}
-        for post in all_posts:
-            if post.topic_id not in posts_by_topic:
-                posts_by_topic[post.topic_id] = []
-            posts_by_topic[post.topic_id].append(post)
-        
-        cols = st.columns(3)  # Always create 3 columns for consistent card sizing
         for idx, topic in enumerate(user_topics):
             # Use modulo to wrap to next row after 3 cards
             col_idx = idx % 3
             with cols[col_idx]:
+                # Add spinner and pagination for post loading
+                import math
                 posts = posts_by_topic.get(topic.id, [])
-                
+                PAGE_SIZE = 20
+                total_pages = math.ceil(len(posts) / PAGE_SIZE) if posts else 1
+                page_key = f"page_{topic.id}"
+                page_num = st.session_state.get(page_key, 1)
+                if total_pages > 1:
+                    page_num = st.number_input(f"Page for {topic.name}", min_value=1, max_value=total_pages, value=page_num, key=page_key)
+                start_idx = (page_num - 1) * PAGE_SIZE
+                end_idx = start_idx + PAGE_SIZE
+                with st.spinner("Loading posts..."):
+                    paged_posts = posts[start_idx:end_idx]
                 new_posts_count = 0
                 if topic.last_viewed and posts:
                     new_posts_count = sum(1 for p in posts if p.posted_at > topic.last_viewed)
@@ -237,19 +212,19 @@ def render_overview_page(topics, session, Post, current_user_id: int):
                     st.info("No posts collected yet")
                 
                 # Apple-style explore button - green when there are new posts
+                button_label = "📫 No new posts"
+                button_style = "background: linear-gradient(135deg, #E5E5EA, #D1D1D6); color: #3A3A3C; border: none;"
                 if new_posts_count > 0:
-                    st.markdown("""
-                    <style>
-                    div[data-testid="stButton"] button {
-                        background: linear-gradient(135deg, #34C759, #30B050) !important;
-                        color: white !important;
-                        border: none !important;
-                        box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3) !important;
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
-                
-                if st.button("🔍 **Explore**", key=f"open_{topic.id}", use_container_width=True, type="primary"):
+                    button_label = f"🔔 {new_posts_count} new posts"
+                    button_style = "background: linear-gradient(135deg, #34C759, #30B050); color: white; border: none; box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3);"
+                st.markdown(f"""
+                <style>
+                div[data-testid='stButton'] button {{
+                    {button_style}
+                }}
+                </style>
+                """, unsafe_allow_html=True)
+                if st.button(button_label, key=f"open_{topic.id}", use_container_width=True, type="primary"):
                     st.session_state.selected_topic = topic.id
                     st.rerun()
             

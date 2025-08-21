@@ -546,9 +546,23 @@ def fetch_instagram(topic: Topic) -> Tuple[List[dict], List[str]]:
         
         # Format posts
         for post in posts:
-            if not post['title'].startswith('📷'):
-                post['title'] = f"📷 Instagram: {post['title']}"
+            if not post.get('title', '').startswith('📷'):
+                post['title'] = f"📷 Instagram: {post.get('title', '')}"
             post['source'] = 'instagram'
+            # Try to extract image_url from DuckDuckGo or RSS results
+            if 'image_url' not in post or not post['image_url']:
+                # Try to find image in content or url
+                if 'instagram.com/p/' in post.get('url', ''):
+                    # Instagram post URL, try to get thumbnail
+                    shortcode = post['url'].rstrip('/').split('/')[-1]
+                    post['image_url'] = f"https://www.instagram.com/p/{shortcode}/media/?size=l"
+                elif 'photo' in post.get('title', '').lower() or 'photo' in post.get('content', '').lower():
+                    # Fallback: use DuckDuckGo image if present
+                    img_match = None
+                    import re
+                    img_match = re.search(r'(https?://[\w./%-]+\.(?:jpg|jpeg|png|webp))', post.get('content', ''))
+                    if img_match:
+                        post['image_url'] = img_match.group(1)
             
     except Exception as exc:
         errors.append(f"Instagram search failed: {exc}")

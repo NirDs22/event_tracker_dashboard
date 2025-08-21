@@ -62,6 +62,7 @@ jobs:
         python -c "
         from monitoring.database import engine, SessionLocal
         from monitoring.shared_topics import get_all_shared_topics_for_collection
+        from sqlalchemy import text
         
         print('🔌 Testing database connection...')
         session = SessionLocal()
