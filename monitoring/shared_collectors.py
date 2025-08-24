@@ -13,7 +13,7 @@ from monitoring.shared_topics import (
 )
 from monitoring.collectors import (
     # Import existing collector functions
-    fetch_twitter_nitter,
+    fetch_twitter,
     fetch_reddit,
     fetch_news,
     fetch_instagram,
