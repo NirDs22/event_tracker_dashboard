@@ -8,7 +8,7 @@ on:
       force_collection:
         description: 'Force collection for all topics'
         required: false
-        default: 'false'
+        default: false
         type: boolean
       specific_topics:
         description: 'Specific topic IDs to collect (comma-separated, leave empty for all)'
