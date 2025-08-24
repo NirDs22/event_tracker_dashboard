@@ -353,9 +353,8 @@ def render_shared_metrics_summary(subscriptions: List[Dict], session):
     </div>
     """), height=180)
 
-
 def render_shared_topic_card(subscription: Dict, session):
-    """Render a card for a shared topic subscription with EXACT same design as original topics."""
+    """Render a card for a shared topic subscription with Apple-style design."""
     
     topic_name = subscription['name']
     posts_count = subscription['posts_count']
@@ -369,13 +368,17 @@ def render_shared_topic_card(subscription: Dict, session):
     recent_posts = get_shared_topic_posts(
         session, 
         subscription['shared_topic_id'], 
-        limit=50  # Get more for analytics
+        limit=50
     )
     
-    # Calculate new posts (simplified for shared topics)
-    new_posts_count = 0  # For shared topics, we'll keep this simple for now
-    
-    # EXACT Apple-style topic card matching original working design
+    # ✅ Calculate new posts since last viewed
+    last_viewed = subscription.get("last_viewed")
+    if last_viewed:
+        new_posts_count = sum(1 for p in recent_posts if p.posted_at > last_viewed)
+    else:
+        new_posts_count = len(recent_posts)
+
+    # Card design
     st_html(dedent(f"""
     <div style="
         background: #FFFFFF;
@@ -441,14 +444,11 @@ def render_shared_topic_card(subscription: Dict, session):
     """), height=200)
     
     if recent_posts:
-        # Mini analytics chart like the original
         from ui.charts import create_mini_analytics_chart, create_source_badges
         create_mini_analytics_chart(recent_posts, topic_color)
-        
-        # Source breakdown with enhanced badges like the original  
         source_badges = create_source_badges(recent_posts)
         st_html(source_badges, height=50)
-        
+
         if new_posts_count > 0:
             st_html(dedent(f"""
             <div style="
@@ -484,22 +484,27 @@ def render_shared_topic_card(subscription: Dict, session):
     else:
         st.info("No posts collected yet")
     
-    # Apple-style explore button - green when there are new posts
+    # ✅ Unique key for button
+    button_key = f"explore_{subscription['subscription_id']}"
+    
+    # ✅ Apply green style only to THIS button
     if new_posts_count > 0:
-        st.markdown("""
+        st.markdown(f"""
         <style>
-        div[data-testid="stButton"] button {
+        div[data-testid="stButton"][key="{button_key}"] button {{
             background: linear-gradient(135deg, #34C759, #30B050) !important;
             color: white !important;
             border: none !important;
             box-shadow: 0 4px 15px rgba(52, 199, 89, 0.3) !important;
-        }
+        }}
         </style>
         """, unsafe_allow_html=True)
     
-    if st.button("🔍 **Explore**", key=f"explore_{subscription['subscription_id']}", use_container_width=True, type="primary"):
+    # Explore button
+    if st.button("🔍 **Explore**", key=button_key, use_container_width=True, type="primary"):
         st.session_state.selected_shared_topic = subscription['shared_topic_id']
         st.rerun()
+
 
 
 def render_shared_post_preview(post):
